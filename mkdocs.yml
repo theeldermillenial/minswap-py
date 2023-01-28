@@ -1,0 +1,15 @@
+site_name: minswap-py
+nav:
+  - Home: index.md
+repo_url: https://github.com/theeldermillenial/minswap-py
+plugins:
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+theme:
+  name: material
+  palette:
+    scheme: slate
+    primary: light green
+    accent: orange
