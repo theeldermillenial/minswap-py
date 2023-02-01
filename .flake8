@@ -2,6 +2,6 @@
 max-line-length = 88
 extend-ignore = E203
 per-file-ignores =
-    src/minswap/models/blockfrost.py: E501,D
+    src/minswap/models/blockfrost_models.py: E501,D
 exclude =
     noxfile.py

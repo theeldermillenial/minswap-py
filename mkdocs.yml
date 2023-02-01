@@ -1,15 +1,38 @@
 site_name: minswap-py
 nav:
   - Home: index.md
+  - Reference: reference/
+  - About: about.md
 repo_url: https://github.com/theeldermillenial/minswap-py
+repo_name: theeldermillenial/minswap-py
 plugins:
+  - search
+  - gen-files:
+      scripts:
+      - docs/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
   - mkdocstrings:
       handlers:
         python:
+          options:
+            show_signature_annotations: true
+            docstring_section_style: spacy
+            separate_signature: true
           paths: [src]
 theme:
   name: material
+  logo: img/minswap-logo-white.png
+  favicon: images/minswap-logo-white.png
   palette:
     scheme: slate
-    primary: light green
-    accent: orange
+    primary: indigo
+    accent: purple
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.expand
+    - content.action.view
+  icon:
+    repo: fontawesome/brands/github

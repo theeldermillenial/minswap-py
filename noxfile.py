@@ -15,10 +15,21 @@ def build_blockfrost_classes(session):
     Args:
         session (_type_): _description_
     """
+    # Install dependencies
     session.install("datamodel-code-generator", ".")
-    source = local.joinpath("data/openapi.json")
-    destination = local.joinpath("src/minswap/models/blockfrost.py")
-    destination.parent.mkdir(exist_ok=True, parents=True)
+    session.install("requests", ".")
+
+    # Download the latest OpenAPI schema from blockfrost/openapi/master
+    import requests
+
+    url = "https://raw.githubusercontent.com/blockfrost/openapi/master/openapi.yaml"
+    source = local.joinpath("src/models/data/blockfrost/openapi.yaml")
+    source.parent.mkdir(exist_ok=True, parents=True)
+    response = requests.get(url=url)
+    with open(source, "w") as fw:
+        fw.write(response.text)
+
+    destination = local.joinpath("src/minswap/models/data/blockfrost_models.py")
     session.run(
         "datamodel-codegen",
         "--input",
