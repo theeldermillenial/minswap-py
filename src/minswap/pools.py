@@ -1,9 +1,7 @@
-"""Functions for processing minswap pools.
-
-- `get_pools()` - Get a list of all pools.
-"""
+"""Functions for processing minswap pools."""
 import logging
 from datetime import datetime
+from decimal import Decimal
 from typing import List, Tuple, Union
 
 import blockfrost
@@ -11,13 +9,13 @@ from dotenv import dotenv_values
 from pydantic import BaseModel, root_validator
 
 from minswap import addr
+from minswap.assets import asset_decimals, naturalize_assets
 from minswap.models import (  # type: ignore[attr-defined]
     AddressUtxoContent,
     AddressUtxoContentItem,
     AssetIdentity,
-    Quantity,
+    Assets,
     TxIn,
-    Value,
 )
 
 logging.basicConfig(
@@ -25,31 +23,6 @@ logging.basicConfig(
     datefmt="%d-%b-%y %H:%M:%S",
 )
 logger = logging.getLogger("minswap.pools")
-
-
-def normalize_assets(a: Quantity, b: Quantity) -> Tuple[Quantity, Quantity]:
-    """Sort assets by ADA first, then by lexicographical order.
-
-    Args:
-        a: The first token.
-        b: The second token.
-
-    Raises:
-        ValueError: If neither token is ADA or cannot be sorted lexicographically.
-
-    Returns:
-        Tuple[Value, Value]: _description_
-    """
-    if a.unit == "lovelace":
-        return (a, b)
-    elif b.unit == "lovelace":
-        return (b, a)
-    elif a.unit > b.unit:
-        return (a, b)
-    elif a.unit < b.unit:
-        return (b, a)
-    else:
-        raise ValueError("Incompatible values.")
 
 
 def check_valid_pool_output(utxo: AddressUtxoContentItem):
@@ -97,10 +70,10 @@ class PoolState(BaseModel):
     """A particular pool state, either current of historical."""
 
     tx_in: TxIn
-    value: Value
+    assets: Assets
+    pool_nft: Assets
+    minswap_nft: Assets
     datum_hash: str
-    asset_a: Quantity
-    asset_b: Quantity
 
     class Config:  # noqa: D106
         allow_mutation = False
@@ -108,34 +81,43 @@ class PoolState(BaseModel):
     @root_validator(pre=True)
     def translate_address(cls, values):  # noqa: D102
 
-        # Find the NFT token for the pool
-        value: Value = values["value"]
-        nfts = [
-            asset for asset in value if asset.unit.startswith(addr.POOL_NFT_POLICY_ID)
-        ]
+        assets: Assets = values["assets"]
+
+        # Find the NFT that assigns the pool a unique id
+        nfts = [asset for asset in assets if asset.startswith(addr.POOL_NFT_POLICY_ID)]
         if len(nfts) != 1:
             raise ValueError("A pool must have one pool NFT token.")
-        nft = nfts[0]
-        pool_id = nft.unit[56:]
+        pool_nft = Assets(**{nfts[0]: assets.__root__.pop(nfts[0])})
+        values["pool_nft"] = pool_nft
 
-        relevant_assets = [
-            asset
-            for asset in value
-            if not asset.unit.startswith(addr.FACTORY_POLICY_ID)
-            and not asset.unit.endswith(pool_id)
-        ]
+        # Find the Minswap NFT token
+        nfts = [asset for asset in assets if asset.startswith(addr.FACTORY_POLICY_ID)]
+        if len(nfts) != 1:
+            raise ValueError("A pool must have one Minswap NFT token.")
+        minswap_nft = Assets(**{nfts[0]: assets.__root__.pop(nfts[0])})
+        values["minswap_nft"] = minswap_nft
 
-        non_ada_assets = [a for a in relevant_assets if a.unit != "lovelace"]
+        # Sometimes LP tokens for the pool are in the pool...so remove them
+        pool_id = pool_nft.unit()[len(addr.POOL_NFT_POLICY_ID) :]
+        lps = [asset for asset in assets if asset.endswith(pool_id)]
+        for lp in lps:
+            assets.__root__.pop(lp)
 
-        if len(relevant_assets) == 2:
+        non_ada_assets = [a for a in assets if a != "lovelace"]
+
+        if len(assets) == 2:
             # ADA pair
             assert len(non_ada_assets) == 1, "Pool must only have 1 non-ADA asset."
-            values["asset_a"] = [a for a in value if a.unit == "lovelace"][0]
-            values["asset_b"] = non_ada_assets[0]
-        elif len(relevant_assets) == 3:
+
+        elif len(assets) == 3:
             # Non-ADA pair
             assert len(non_ada_assets) == 2, "Pool must only have 2 non-ADA assets."
-            values["asset_a"], values["asset_b"] = normalize_assets(*non_ada_assets)
+
+            # Send the ADA token to the end
+            values["assets"].__root__["lovelace"] = values["assets"].__root__.pop(
+                "lovelace"
+            )
+
         else:
             raise ValueError(
                 "Pool must have 2 or 3 assets except factor, NFT, and LP tokens."
@@ -144,42 +126,34 @@ class PoolState(BaseModel):
         return values
 
     @property
-    def nft(self) -> Quantity:
-        """Get the pool nft asset."""
-        nfts = [a for a in self.value if a.unit.startswith(addr.POOL_NFT_POLICY_ID)]
-        if len(nfts) != 1:
-            raise ValueError("A pool must have one pool NFT token.")
-        return nfts[0]
-
-    @property
     def id(self) -> str:
         """Pool id."""
-        return self.nft.unit[len(addr.POOL_NFT_POLICY_ID) :]
+        return self.pool_nft[len(addr.POOL_NFT_POLICY_ID) :]
 
     @property
-    def pool_lp(self) -> str:
+    def lp_token(self) -> str:
         """Pool liquidity provider token."""
         return f"{addr.LP_POLICY_ID}{self.id}"
 
     @property
     def unit_a(self) -> str:
         """Token name of asset A."""
-        return self.asset_a.unit
+        return self.assets.unit(0)
 
     @property
     def unit_b(self) -> str:
         """Token name of asset b."""
-        return self.asset_b.unit
+        return self.assets.unit(1)
 
     @property
     def reserve_a(self) -> int:
         """Reserve amount of asset A."""
-        return self.asset_a.quantity
+        return self.assets.quantity(0)
 
     @property
     def reserve_b(self) -> int:
         """Reserve amount of asset B."""
-        return self.asset_b.quantity
+        return self.assets.quantity(1)
 
     def _get_asset_name(self, value: str) -> str:
         logger.debug(f"_get_asset_info: {value}")
@@ -200,7 +174,23 @@ class PoolState(BaseModel):
         """Information about asset B."""
         return self._get_asset_name(self.unit_b)
 
-    def get_amount_out(self, asset: Quantity) -> Quantity:
+    @property
+    def price(self) -> Tuple[Decimal, Decimal]:
+        """Price of assets."""
+        nat_assets = naturalize_assets(self.assets)
+
+        prec_a = 1 / Decimal(10 ** asset_decimals(self.unit_a))
+        prec_b = 1 / Decimal(10 ** asset_decimals(self.unit_b))
+        print(f"prec_a={prec_a}, prec_b={prec_b}")
+
+        prices = (
+            (nat_assets[self.unit_a] / nat_assets[self.unit_b]),
+            (nat_assets[self.unit_b] / nat_assets[self.unit_a]),
+        )
+
+        return prices
+
+    def get_amount_out(self, asset: Assets) -> Assets:
         """Get the output asset amount given an input asset amount.
 
         Args:
@@ -209,6 +199,7 @@ class PoolState(BaseModel):
         Returns:
             The estimated asset returned from the swap.
         """
+        assert len(asset) == 1, "Asset should only have one token."
         assert asset.unit in [
             self.unit_a,
             self.unit_b,
@@ -220,12 +211,12 @@ class PoolState(BaseModel):
             reserve_in, reserve_out = self.reserve_b, self.reserve_a
             unit_out = self.unit_a
 
-        numerator: int = asset.quantity * 997 * reserve_out
-        denominator: int = asset.quantity * 997 + reserve_in * 1000
+        numerator: int = asset.quantity() * 997 * reserve_out
+        denominator: int = asset.quantity() * 997 + reserve_in * 1000
 
-        return Quantity(unit=unit_out, quantity=numerator // denominator)
+        return Assets(unit=unit_out, quantity=numerator // denominator)
 
-    def get_amount_in(self, asset: Quantity) -> Quantity:
+    def get_amount_in(self, asset: Assets) -> Assets:
         """Get the input asset amount given a desired output asset amount.
 
         Args:
@@ -234,7 +225,8 @@ class PoolState(BaseModel):
         Returns:
             The estimated asset needed for input in the swap.
         """
-        assert asset.unit in [
+        assert len(asset) == 1, "Asset should only have one token."
+        assert asset.unit() in [
             self.unit_a,
             self.unit_b,
         ], f"Asset {asset.unit} is invalid for pool {self.unit_a}-{self.unit_b}"
@@ -245,10 +237,10 @@ class PoolState(BaseModel):
             reserve_in, reserve_out = self.reserve_b, self.reserve_a
             unit_out = self.unit_b
 
-        numerator: int = asset.quantity * 1000 * reserve_in
-        denominator: int = (reserve_out - asset.quantity) * 997
+        numerator: int = asset.quantity() * 1000 * reserve_in
+        denominator: int = (reserve_out - asset.quantity()) * 997
 
-        return Quantity(unit=unit_out, quantity=numerator // denominator)
+        return Assets(unit=unit_out, quantity=numerator // denominator)
 
 
 class PoolHistory(BaseModel):
@@ -288,8 +280,8 @@ def get_pools(
         if is_valid_pool_output(utxo):
             pools.append(
                 PoolState(
-                    tx_in=TxIn(transaction_id=utxo.tx_hash, index=utxo.output_index),
-                    value=Value(__root__=[a.dict() for a in utxo.amount]),
+                    tx_in=TxIn(tx_hash=utxo.tx_hash, tx_index=utxo.output_index),
+                    assets=Assets(values=utxo.amount),
                     datum_hash=utxo.data_hash,
                 )
             )

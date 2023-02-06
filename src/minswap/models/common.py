@@ -5,11 +5,12 @@ functions for converting data types.
 """
 
 from collections.abc import Iterable
+from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 import pycardano
 from blockfrost import Namespace
-from pydantic import BaseModel, root_validator, validator
+from pydantic import BaseModel, Field, root_validator, validator
 
 from minswap.models import blockfrost_models
 
@@ -72,8 +73,22 @@ class BaseDict(BaseList):
     """Utility class for dict models."""
 
     def items(self):
-        """Iterate of key-value pairs."""
+        """Return iterable of key-value pairs."""
         return self.__root__.items()
+
+    def keys(self):
+        """Return iterable of keys."""
+        return self.__root__.keys()
+
+    def values(self):
+        """Return iterable of values."""
+        return self.__root__.values()
+
+    def __getitem__(self, item):  # noqa
+        try:
+            super().__getitem__(item)
+        except KeyError:
+            self.__root__.items()[item]
 
 
 class TxIn(BaseModel):
@@ -98,30 +113,34 @@ def _unit_alias(unit: str) -> str:
         return unit
 
 
-class Quantity(BaseModel):
-    """A quantity of a blockchain asset."""
-
-    unit: str
-    quantity: int
-
-    class Config:  # noqa
-        alias_generator = _unit_alias
-        allow_mutation = False
-
-
-class Value(BaseModel):
+class Assets(BaseDict):
     """Contains all tokens and quantities."""
 
-    __root__: List[Quantity]
+    __root__: Dict[str, int]
 
-    def __iter__(self):  # noqa
-        return iter(self.__root__)
+    def unit(self, index: int = 0):
+        """Units of asset at `index`."""
+        return list(self.keys())[index]
 
-    def __getitem__(self, item):  # noqa
-        return self.__root__[item]
+    def quantity(self, index: int = 0):
+        """Quantity of the asset at `index`."""
+        return list(self.values())[index]
 
-    def __len__(self):  # noqa
-        return len(self.__root__)
+    @root_validator(pre=True)
+    def _digest_assets(cls, values):
+
+        root: Dict[str, int] = {}
+        if "__root__" in values:
+            root = values["__root__"]
+        elif "values" in values and isinstance(values["values"], list):
+            root = {v.unit: v.quantity for v in values["values"]}
+        else:
+            root = {k: v for k, v in values.items()}
+        root = dict(
+            sorted(root.items(), key=lambda x: "" if x[0] == "lovelace" else x[0])
+        )
+
+        return {"__root__": root}
 
 
 class Address(BaseModel):
@@ -166,6 +185,10 @@ class OnchainMetadata(blockfrost_models.AssetOnchainMetadataCip25):
     """Data class to hold on chain metadata for an asset."""
 
     _files_val = validator("files", pre=True, allow_reuse=True)(to_dict)
+    image: Union[str, List[str], None] = Field(
+        None, example="ipfs://ipfs/QmfKyJ4tuvHowwKQCbCHj4L5T3fSj8cjs7Aau8V7BWv226"
+    )  # type:ignore
+    name: Optional[str] = Field(None, example="My NFT token")  # type:ignore
 
 
 class Metadata(blockfrost_models.Metadata1):
@@ -187,12 +210,29 @@ class Metadata(blockfrost_models.Metadata1):
     url: Optional[str] = blockfrost_models.Metadata1.__fields__["url"]  # type: ignore
 
 
+class OnchainMetadataStandard(Enum):
+    """On chain metadata standard version.
+
+    This class only exists because Genius Yield follow CIP68, and the blockfrost API
+    doesn't handle it well.
+
+    https://cips.cardano.org/cips/cip25/
+    https://cips.cardano.org/cips/cip68/
+    """
+
+    CIP25v1 = "CIP25v1"
+    CIP25v2 = "CIP25v2"
+    CIP68v1 = "CIP68v1"
+
+
 class AssetIdentity(blockfrost_models.Asset1):
     """A blockchain asset."""
 
     onchain_metadata: Optional[OnchainMetadata] = blockfrost_models.Asset1.__fields__[
         "onchain_metadata"
     ]  # type: ignore
+
+    onchain_metadata_standard: Optional[OnchainMetadataStandard]  # type: ignore
 
     metadata: Optional[Metadata] = blockfrost_models.Asset1.__fields__[
         "metadata"
@@ -201,6 +241,17 @@ class AssetIdentity(blockfrost_models.Asset1):
     _onchain_metadata_val = validator("onchain_metadata", pre=True, allow_reuse=True)(
         to_dict
     )
+
+    class Config:  # noqa: D106
+        use_enum_values = True
+
+    @property
+    def decimals(self) -> int:
+        """Decimal precision of the asset."""
+        if self.metadata is not None and self.metadata.decimals is not None:
+            return self.metadata.decimals
+        else:
+            return 0
 
 
 class AddressUtxoContentItem(blockfrost_models.AddressUtxoContentItem):
@@ -221,7 +272,7 @@ class AddressUtxoContentItem(blockfrost_models.AddressUtxoContentItem):
     ]  # type: ignore
 
 
-class AddressUtxoContent(blockfrost_models.AddressUtxoContent):
+class AddressUtxoContent(blockfrost_models.AddressUtxoContent, BaseList):
     """An address UTxO list of items."""
 
     __root__: List[
@@ -229,12 +280,3 @@ class AddressUtxoContent(blockfrost_models.AddressUtxoContent):
     ] = blockfrost_models.AddressUtxoContent.__fields__[
         "__root__"
     ]  # type:ignore
-
-    def __iter__(self):  # noqa
-        return iter(self.__root__)
-
-    def __getitem__(self, item):  # noqa
-        return self.__root__[item]
-
-    def __len__(self):  # noqa
-        return len(self.__root__)
