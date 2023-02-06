@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "minswap-py"
-version = "0.0.1-dev2"
+version = "0.1.0-dev0"
 description = ""
 authors = ["eldermillenial <eldermillenial@protonmail.com>"]
 readme = "README.md"
