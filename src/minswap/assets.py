@@ -137,13 +137,33 @@ def asset_ticker(unit: str) -> str:
         The ticker or human readable name of an asset.
     """
     if unit == "lovelace":
-        return "ADA"
+        asset_name = "ADA"
     else:
         info = get_asset_info(unit)
         if info is None:
             raise ValueError("Could not find asset.")
         if info.metadata is not None and info.metadata.ticker is not None:
-            return info.metadata.ticker
+            asset_name = info.metadata.ticker
+            logger.debug(f"Found ticker for {asset_name}.")
+        elif (
+            info.onchain_metadata is not None
+            and hasattr(info.onchain_metadata, "symbol")
+            and info.onchain_metadata.symbol is not None
+        ):
+            asset_name = info.onchain_metadata.symbol
+            logger.debug(f"Found symbol for {asset_name}")
         else:
-            print("Returning name instead")
-            return bytes.fromhex(info.asset_name).decode()
+            try:
+                asset_name = bytes.fromhex(info.asset_name).decode()
+                logger.debug(
+                    f"Could not find ticker for asset ({asset_name}), "
+                    + "returning the name."
+                )
+            except UnicodeDecodeError:
+                logger.debug(
+                    "Could not find ticker, symbol, and asset_name was not decodable. "
+                    + "Returning raw asset_name."
+                )
+                asset_name = info.asset_name
+
+    return asset_name

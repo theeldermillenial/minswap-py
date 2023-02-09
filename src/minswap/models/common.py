@@ -5,6 +5,7 @@ functions for converting data types.
 """
 
 from collections.abc import Iterable
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
@@ -54,6 +55,15 @@ def to_dict(
         assert isinstance(values, (list, dict)), f"Error: {values}"
 
     return values
+
+
+class PoolHistory(BaseModel):
+    """A historical point in the pool."""
+
+    tx_hash: str
+    tx_index: int
+    block_height: int
+    time: datetime
 
 
 class BaseList(BaseModel):
@@ -280,3 +290,52 @@ class AddressUtxoContent(blockfrost_models.AddressUtxoContent, BaseList):
     ] = blockfrost_models.AddressUtxoContent.__fields__[
         "__root__"
     ]  # type:ignore
+
+
+class Input(blockfrost_models.Input):
+    """An input to a transaction."""
+
+    inline_datum: Optional[str] = Field(None, example="19a6aa")  # type: ignore
+    """
+    CBOR encoded inline datum
+    """
+    reference_script_hash: Optional[str] = Field(
+        None, example="13a3efd825703a352a8f71f4e2758d08c28c564e8dfcce9f77776ad1"
+    )  # type: ignore
+    """
+    The hash of the reference script of the input
+    """
+    data_hash: Optional[str] = Field(
+        None, example="9e478573ab81ea7a8e31891ce0648b81229f408d596a3483e6f4f9b92d3cf710"
+    )  # type: ignore
+    """
+    The hash of the transaction output datum
+    """
+
+
+class Output(blockfrost_models.Output):
+    """An output to a transaction."""
+
+    inline_datum: Optional[str] = Field(None, example="19a6aa")  # type: ignore
+    """
+    CBOR encoded inline datum
+    """
+    reference_script_hash: Optional[str] = Field(
+        None, example="13a3efd825703a352a8f71f4e2758d08c28c564e8dfcce9f77776ad1"
+    )  # type: ignore
+    """
+    The hash of the reference script of the input
+    """
+    data_hash: Optional[str] = Field(
+        None, example="9e478573ab81ea7a8e31891ce0648b81229f408d596a3483e6f4f9b92d3cf710"
+    )  # type: ignore
+    """
+    The hash of the transaction output datum
+    """
+
+
+class TxContentUtxo(blockfrost_models.TxContentUtxo):
+    """A Transaction, containing all inputs and outputs."""
+
+    inputs: List[Input]  # type: ignore
+    outputs: List[Output]  # type: ignore
