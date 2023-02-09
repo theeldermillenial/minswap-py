@@ -26,6 +26,21 @@ def test_get_pools(return_non_pools: bool):
 
 
 @pytest.mark.parametrize(("pool", "pool_id"), list(test_pools.items()))
-def test_price(pool, pool_id):
+def test_price(pool: str, pool_id: str):
 
-    print(f"{pool}: {pools.get_pool_by_id(pool_id)}")
+    pool_state = pools.get_pool_by_id(pool_id)
+
+    assert pool_state is not None
+
+    print(f"{pool}: {pool_state.price}")
+
+
+@pytest.mark.parametrize(("pool", "pool_id"), list(test_pools.items()))
+def test_tvl(pool: str, pool_id: str):
+    # TODO: Add in expected failures to catch non-ADA pools.
+
+    pool_state = pools.get_pool_by_id(pool_id)
+
+    assert pool_state is not None
+
+    print(f"{pool}: {pool_state.tvl}")

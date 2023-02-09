@@ -194,6 +194,22 @@ class PoolState(BaseModel):
 
         return prices
 
+    @property
+    def tvl(self) -> Decimal:
+        """Return the total value locked for the pool.
+
+        Raises:
+            NotImplementedError: Only ADA pool TVL is implemented.
+        """
+        if self.unit_a != "lovelace":
+            raise NotImplementedError("tvl for non-ADA pools is not implemented.")
+
+        tvl = (Decimal(self.reserve_a) / Decimal(10**6)).quantize(
+            1 / Decimal(10**6)
+        )
+
+        return tvl
+
     def get_amount_out(self, asset: Assets) -> Assets:
         """Get the output asset amount given an input asset amount.
 
