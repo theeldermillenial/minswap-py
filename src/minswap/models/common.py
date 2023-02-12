@@ -252,6 +252,21 @@ class AssetIdentity(blockfrost_models.Asset1):
         to_dict
     )
 
+    @root_validator(pre=True)
+    def _validate_asset_name(cls, values):
+        """Handle missing asset metadata.
+
+        Liqwid's qADA did not include asset_name in their metadata. This attempts to
+        find the asset name in another piece of metadata.
+
+        qADA policy: a04ce7a52545e5e33c2867e148898d9e667a69602285f6a1298f9d68
+        """
+        if values["asset_name"] is None:
+            if values["metadata"] is not None:
+                values["asset_name"] = values["metadata"]["name"]
+
+        return values
+
     class Config:  # noqa: D106
         use_enum_values = True
 
