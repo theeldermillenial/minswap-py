@@ -39,6 +39,14 @@ profile = "black"
 [tool.mypy]
 exclude = ['^blockfrost\.py$', 'tests/']
 
+[project]
+license = {file = "LICENSE"}
+authors = {name = "Elder-Millenial", email = "eldermillenial@protonmail.com"}
+
+[project.urls]
+repository = "https://github.com/theeldermillenial/minswap-py"
+issues = "https://github.com/theeldermillenial/minswap-py/issues"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
