@@ -5,6 +5,11 @@ description = ""
 authors = ["eldermillenial <eldermillenial@protonmail.com>"]
 readme = "README.md"
 packages = [{include = "minswap", from = "src"}]
+license = "MIT"
+repository = "https://github.com/theeldermillenial/minswap-py"
+
+[tool.poetry.urls]
+"Issues" = "https://github.com/theeldermillenial/minswap-py/issues"
 
 [tool.poetry.dependencies]
 python = "^3.8.1"
@@ -38,14 +43,6 @@ profile = "black"
 
 [tool.mypy]
 exclude = ['^blockfrost\.py$', 'tests/']
-
-[project]
-license = {file = "LICENSE"}
-authors = {name = "Elder-Millenial", email = "eldermillenial@protonmail.com"}
-
-[project.urls]
-repository = "https://github.com/theeldermillenial/minswap-py"
-issues = "https://github.com/theeldermillenial/minswap-py/issues"
 
 [build-system]
 requires = ["poetry-core"]
