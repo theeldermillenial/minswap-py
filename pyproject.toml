@@ -1,0 +1,49 @@
+[tool.poetry]
+name = "minswap-py"
+version = "0.1.1"
+description = ""
+authors = ["eldermillenial <eldermillenial@protonmail.com>"]
+readme = "README.md"
+packages = [{include = "minswap", from = "src"}]
+license = "MIT"
+repository = "https://github.com/theeldermillenial/minswap-py"
+
+[tool.poetry.urls]
+"Issues" = "https://github.com/theeldermillenial/minswap-py/issues"
+
+[tool.poetry.dependencies]
+python = "^3.8.1"
+blockfrost-python = "0.5.2"
+pycardano = "0.7.2"
+pydantic = "1.10.4"
+python-dotenv = "0.21.1"
+
+[tool.poetry.group.dev.dependencies]
+nox = "2022.11.21"
+nox-poetry = "1.0.2"
+pytest = "7.2.1"
+black = "22.12.0"
+datamodel-code-generator = {extras = ["http"], version = "^0.16.1"}
+bump2version = "^1.0.1"
+mypy = "^0.991"
+flake8 = "^6.0.0"
+flake8-docstrings = "^1.7.0"
+mkdocs = "^1.4.2"
+mkdocs-material = "^9.0.6"
+mkdocstrings = "^0.20.0"
+mkdocs-gen-files = "^0.4.0"
+mkdocstrings-python = "^0.8.3"
+mkdocs-literate-nav = "^0.6.0"
+semver = "^2.13.0"
+packaging = "^23.0"
+pre-commit = "^3.0.1"
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+exclude = ['^blockfrost\.py$', 'tests/']
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

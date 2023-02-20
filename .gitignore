@@ -127,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# downloaded data
+openapi.yaml
+
+# ignore data directories
+data
