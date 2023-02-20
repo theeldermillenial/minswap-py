@@ -1,7 +1,7 @@
 """Functions for processing minswap pools."""
 import logging
 from decimal import Decimal
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Union
 
 import blockfrost
 from dotenv import dotenv_values
@@ -24,7 +24,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)-8s - %(levelname)-8s - %(message)s",
     datefmt="%d-%b-%y %H:%M:%S",
 )
-logger = logging.getLogger("minswap.pools")
+logger = logging.getLogger(__name__)
 
 
 def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
@@ -82,7 +82,6 @@ class PoolState(BaseModel):
 
     @root_validator(pre=True)
     def translate_address(cls, values):  # noqa: D102
-
         assets: Assets = values["assets"]
 
         # Find the NFT that assigns the pool a unique id
@@ -177,13 +176,13 @@ class PoolState(BaseModel):
         return self._get_asset_name(self.unit_b)
 
     @property
-    def price(self) -> Tuple[Decimal, Decimal]:
+    def price(self) -> tuple[Decimal, Decimal]:
         """Price of assets.
 
         Returns:
             A `Tuple[Decimal, Decimal] where the first `Decimal` is the price to buy
-                1 of token B in units of token A, and the `Decimal` is the price to buy
-                1 of token A in units of token B.
+                1 of token B in units of token A, and the second `Decimal` is the price
+                to buy 1 of token A in units of token B.
         """
         nat_assets = naturalize_assets(self.assets)
 
@@ -210,20 +209,22 @@ class PoolState(BaseModel):
 
         return tvl
 
-    def get_amount_out(self, asset: Assets) -> Assets:
+    def get_amount_out(self, asset: Assets) -> tuple[Assets, float]:
         """Get the output asset amount given an input asset amount.
 
         Args:
             asset: An asset with a defined quantity.
 
         Returns:
-            The estimated asset returned from the swap.
+            A tuple where the first value is the estimated asset returned from the swap
+                and the second value is the price impact ratio.
         """
         assert len(asset) == 1, "Asset should only have one token."
         assert asset.unit in [
             self.unit_a,
             self.unit_b,
         ], f"Asset {asset.unit} is invalid for pool {self.unit_a}-{self.unit_b}"
+
         if asset.unit == self.unit_a:
             reserve_in, reserve_out = self.reserve_a, self.reserve_b
             unit_out = self.unit_b
@@ -231,12 +232,22 @@ class PoolState(BaseModel):
             reserve_in, reserve_out = self.reserve_b, self.reserve_a
             unit_out = self.unit_a
 
+        # Calculate the amount out
         numerator: int = asset.quantity() * 997 * reserve_out
         denominator: int = asset.quantity() * 997 + reserve_in * 1000
+        amount_out = Assets(unit=unit_out, quantity=numerator // denominator)
 
-        return Assets(unit=unit_out, quantity=numerator // denominator)
+        # Calculate the price impact
+        price_numerator: int = (
+            reserve_out * asset.quantity() * denominator * 997
+            - numerator * reserve_in * 1000
+        )
+        price_denominator: int = reserve_out * asset.quantity() * denominator * 1000
+        price_impact: float = price_numerator / price_denominator
 
-    def get_amount_in(self, asset: Assets) -> Assets:
+        return amount_out, price_impact
+
+    def get_amount_in(self, asset: Assets) -> tuple[Assets, float]:
         """Get the input asset amount given a desired output asset amount.
 
         Args:
@@ -257,15 +268,25 @@ class PoolState(BaseModel):
             reserve_in, reserve_out = self.reserve_b, self.reserve_a
             unit_out = self.unit_b
 
+        # Estimate the required input
         numerator: int = asset.quantity() * 1000 * reserve_in
         denominator: int = (reserve_out - asset.quantity()) * 997
+        amount_in = Assets(unit=unit_out, quantity=numerator // denominator)
 
-        return Assets(unit=unit_out, quantity=numerator // denominator)
+        # Estimate the price impact
+        price_numerator: int = (
+            reserve_out * numerator * 887
+            - asset.quantity() * denominator * reserve_in * 1000
+        )
+        price_denominator: int = reserve_out * numerator * 1000
+        price_impact: float = price_numerator / price_denominator
+
+        return amount_in, price_impact
 
 
 def get_pools(
     return_non_pools: bool = False,
-) -> Union[List[PoolState], Tuple[List[PoolState], List[AddressUtxoContentItem]]]:
+) -> Union[list[PoolState], tuple[list[PoolState], list[AddressUtxoContentItem]]]:
     """Get a list of all pools.
 
     Args:
@@ -284,8 +305,8 @@ def get_pools(
 
     utxos = AddressUtxoContent.parse_obj(utxos_raw)
 
-    pools: List[PoolState] = []
-    non_pools: List[AddressUtxoContentItem] = []
+    pools: list[PoolState] = []
+    non_pools: list[AddressUtxoContentItem] = []
 
     for utxo in utxos:
         if is_valid_pool_output(utxo):

@@ -1,7 +1,6 @@
 site_name: minswap-py
 nav:
   - Home: index.md
-<<<<<<< HEAD
   - Reference: reference/
   - About: about.md
 repo_url: https://github.com/theeldermillenial/minswap-py
@@ -37,17 +36,3 @@ theme:
     - content.action.view
   icon:
     repo: fontawesome/brands/github
-=======
-repo_url: https://github.com/theeldermillenial/minswap-py
-plugins:
-  - mkdocstrings:
-      handlers:
-        python:
-          paths: [src]
-theme:
-  name: material
-  palette:
-    scheme: slate
-    primary: light green
-    accent: orange
->>>>>>> 56be5173c5286d14f3176fbf053771a7e6137061
