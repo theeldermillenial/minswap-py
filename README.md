@@ -1,4 +1,4 @@
-# minswap-py (v0.1.0-dev4)
+# minswap-py (v0.1.0)
 <p align="center">
     <img src="https://img.shields.io/pypi/status/minswap-py?style=flat-square" />
     <img src="https://img.shields.io/pypi/dm/minswap-py?style=flat-square" />
