@@ -4,7 +4,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from pathlib import Path
-from typing import Dict, MutableSet, Optional, Union
+from typing import Dict, MutableSet, Optional, Tuple, Union
 
 import blockfrost
 from dotenv import dotenv_values
@@ -39,7 +39,6 @@ def update_asset_info(asset: str) -> Optional[AssetIdentity]:
     asset_id = AssetIdentity.parse_obj(info)
 
     with open(asset_path, "w") as fw:
-
         json.dump(asset_id.dict(), fw, indent=2)
 
     return asset_id
@@ -74,7 +73,6 @@ def update_assets(assets: Union[MutableSet[str], Assets]) -> None:
         assets: A list of policy ids plus hex encoded names of assets.
     """
     with ThreadPoolExecutor() as executor:
-
         for _ in executor.map(update_asset_info, assets):
             pass
 
@@ -167,3 +165,52 @@ def asset_ticker(unit: str) -> str:
                 asset_name = info.asset_name
 
     return asset_name
+
+
+def circulating_asset(
+    asset: str = "29d222ce763455e3d7a09a665ce554f00ac89d2e99a1a83d267170c64d494e",
+) -> Tuple[Assets, Assets]:
+    """Calculate the amount of an asset in circulation.
+
+    This identifies all addresses original minting transactions were sent to. Then
+    the number of coins remaining in these minting addresses is subtracted from the
+    total number of coins minted.
+
+    Note:
+        There is a discrepancy between the amount of circulating MIN calculated by this
+        function and what is displayed on Minswap.org. This is mostly likely due to
+        the token vesting schedule, and not accounting for the unlocking schedule.
+
+    Returns:
+        The first output is the amount of circulating asset, the second output is the
+            total minted asset.
+    """
+    env = dotenv_values()
+    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
+
+    hashes = [tx["tx_hash"] for tx in api.asset_history(asset, return_type="json")]
+
+    addresses = set()
+    minted = 0
+    for i, h in enumerate(hashes):
+        utxos = api.transaction_utxos(h, return_type="json")
+
+        for out_utxo in utxos["outputs"]:
+            for token in out_utxo["amount"]:
+                if token["unit"] == asset:
+                    minted += int(token["quantity"])
+                    addresses.add(out_utxo["address"])
+                    break
+
+    circulating = 0
+    for address in addresses:
+        amounts = api.address(address, return_type="json")["amount"]
+
+        for amount in amounts:
+            if amount["unit"] == asset:
+                circulating += int(amount["quantity"])
+
+    total_asset = Assets(**{asset: minted})
+    circ_asset = Assets(**{asset: circulating})
+
+    return circ_asset, total_asset

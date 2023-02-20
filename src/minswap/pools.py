@@ -1,7 +1,8 @@
 """Functions for processing minswap pools."""
 import logging
+from datetime import datetime
 from decimal import Decimal
-from typing import Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import blockfrost
 from dotenv import dotenv_values
@@ -69,7 +70,7 @@ def is_valid_pool_output(utxo: AddressUtxoContentItem):
 
 
 class PoolState(BaseModel):
-    """A particular pool state, either current of historical."""
+    """A particular pool state, either current or historical."""
 
     tx_in: TxIn
     assets: Assets
@@ -176,7 +177,7 @@ class PoolState(BaseModel):
         return self._get_asset_name(self.unit_b)
 
     @property
-    def price(self) -> tuple[Decimal, Decimal]:
+    def price(self) -> Tuple[Decimal, Decimal]:
         """Price of assets.
 
         Returns:
@@ -209,7 +210,7 @@ class PoolState(BaseModel):
 
         return tvl
 
-    def get_amount_out(self, asset: Assets) -> tuple[Assets, float]:
+    def get_amount_out(self, asset: Assets) -> Tuple[Assets, float]:
         """Get the output asset amount given an input asset amount.
 
         Args:
@@ -247,7 +248,7 @@ class PoolState(BaseModel):
 
         return amount_out, price_impact
 
-    def get_amount_in(self, asset: Assets) -> tuple[Assets, float]:
+    def get_amount_in(self, asset: Assets) -> Tuple[Assets, float]:
         """Get the input asset amount given a desired output asset amount.
 
         Args:
@@ -284,9 +285,20 @@ class PoolState(BaseModel):
         return amount_in, price_impact
 
 
+class PoolHistory(BaseModel):
+    """A reference to a pool transaction state."""
+
+    tx_in: TxIn
+    block_height: int
+    time: datetime
+
+    class Config:  # noqa: D106
+        allow_mutation = False
+
+
 def get_pools(
     return_non_pools: bool = False,
-) -> Union[list[PoolState], tuple[list[PoolState], list[AddressUtxoContentItem]]]:
+) -> Union[List[PoolState], tuple[List[PoolState], List[AddressUtxoContentItem]]]:
     """Get a list of all pools.
 
     Args:
@@ -305,8 +317,8 @@ def get_pools(
 
     utxos = AddressUtxoContent.parse_obj(utxos_raw)
 
-    pools: list[PoolState] = []
-    non_pools: list[AddressUtxoContentItem] = []
+    pools: List[PoolState] = []
+    non_pools: List[AddressUtxoContentItem] = []
 
     for utxo in utxos:
         if is_valid_pool_output(utxo):
@@ -352,11 +364,13 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
 
     check_valid_pool_output(pool_utxo)
 
-    return PoolState(
+    out_state = PoolState(
         tx_in=TxIn(tx_hash=tx_hash, tx_index=utxo.output_index),
         assets=Assets(values=utxo.amount),
         datum_hash=utxo.data_hash,
     )
+
+    return out_state
 
 
 def get_pool_by_id(pool_id: str) -> Optional[PoolState]:
@@ -382,3 +396,45 @@ def get_pool_by_id(pool_id: str) -> Optional[PoolState]:
     nft_txs = AssetTransaction.parse_obj(nft_txs[0])
 
     return get_pool_in_tx(tx_hash=nft_txs.tx_hash)
+
+
+def get_pool_history(
+    pool_id: str, page: int = 1, count: int = 100, order: str = "desc"
+) -> List[PoolHistory]:
+    """Get a list of pool history transactions.
+
+    This returns only a list of `PoolHistory` items, each providing enough information
+    to track down a particular pool transaction.
+
+    Args:
+        pool_id: The unique pool id.
+        page: The index of paginated results to return. Defaults to 1.
+        count: The total number of results to return. Defaults to 100.
+        order: Must be "asc" or "desc". Defaults to "desc".
+
+    Returns:
+        A list of `PoolHistory` items.
+    """
+    env = dotenv_values()
+    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
+
+    nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
+    nft_txs = api.asset_transactions(
+        nft, count=count, page=page, order=order, return_type="json"
+    )
+
+    if len(nft_txs) == 0:
+        return []
+
+    pool_snapshots = []
+    for ph in nft_txs:
+        at = AssetTransaction.parse_obj(ph)
+        pool_snapshots.append(
+            PoolHistory(
+                tx_in=TxIn(tx_hash=at.tx_hash, tx_index=at.tx_index),
+                block_height=at.block_height,
+                time=datetime.fromtimestamp(at.block_time),
+            )
+        )
+
+    return pool_snapshots

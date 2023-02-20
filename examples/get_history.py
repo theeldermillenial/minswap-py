@@ -1,6 +1,6 @@
 # mypy: ignore-errors
 
-from datetime import datetime
+import pprint
 
 import minswap.pools as pools
 
@@ -13,6 +13,15 @@ test_pools = {
     "ADA-HOSKY": "11e236a5a8826f3f8fbc1114df918b945b0b5d8f9c74bd383f96a0ea14bffade",
 }
 
+pool_id = test_pools["ADA-MIN"]
 
-for pool, pool_id in test_pools.items():
-    print(f"{datetime.now()}: {pool} -> {pools.get_pool_by_id(pool_id).price}")
+# Get the 5 most recent pool state hashes
+history = pools.get_pool_history(pool_id, count=5)
+
+# Get the transaction information for each of the pool history snapshots
+for state in history:
+    in_state, out_state = pools.get_pool_in_tx(state.tx_in.tx_hash, return_input=True)
+
+    print(state.time)
+    pprint.pprint(in_state.dict(), indent=2)
+    pprint.pprint(out_state.dict(), indent=2)
