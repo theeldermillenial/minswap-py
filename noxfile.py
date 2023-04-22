@@ -45,3 +45,18 @@ def build_blockfrost_classes(session):
         "--target-python-version",
         "3.10",
     )
+
+
+@nox_poetry.session(python=["3.10"])
+def unit_tests(session):
+    """Autogenerate the blockfrost models.
+
+    This uses `datamodel-code-generator` to generate model classes from the Blockfrost
+    OpenAPI specification.
+    """
+    # Install dependencies
+    session.install("poetry")
+    session.run_always("poetry", "install", "--only-root")
+    session.install("pytest")
+
+    session.run("pytest")

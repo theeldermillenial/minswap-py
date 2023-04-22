@@ -1,8 +1,15 @@
 # mypy: ignore-errors
-
 import pprint
+from datetime import datetime
+
+import blockfrost
+import pandas
+from dotenv import dotenv_values
 
 import minswap.pools as pools
+
+env = dotenv_values()
+api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
 
 test_pools = {
     "ADA-MIN": "6aa2153e1ae896a95539c9d62f76cedcdabdcdf144e564b8955f609d660cf6a2",
@@ -15,13 +22,48 @@ test_pools = {
 
 pool_id = test_pools["ADA-MIN"]
 
+history = pools.get_pool_transactions(
+    pool_id, start_date=datetime(2023, 1, 30), stop_date=datetime(2023, 2, 1)
+)
+
+pprint.pprint(history)
+quit()
+
 # Get the 5 most recent pool state hashes
-history = pools.get_pool_history(pool_id, count=5)
+history = pools.get_pool_transaction_history(pool_id, count=1)
 
 # Get the transaction information for each of the pool history snapshots
 for state in history:
-    in_state, out_state = pools.get_pool_in_tx(state.tx_in.tx_hash, return_input=True)
+    tx = api.transaction_utxos(state.tx_in.tx_hash, return_type="json")
 
-    print(state.time)
-    pprint.pprint(in_state.dict(), indent=2)
-    pprint.pprint(out_state.dict(), indent=2)
+    pprint.pprint(tx, indent=2)
+
+    df = (
+        pandas.concat(
+            [pandas.DataFrame(tx["inputs"]), pandas.DataFrame(tx["outputs"])],
+            keys=["input", "output"],
+        )
+        .reset_index(level=0)
+        .reset_index(drop=True)
+    )
+
+    df.rename(columns={"level_0": "side"}, inplace=True)
+    df["hash"] = tx["hash"]
+    df["time"] = state.time
+
+    print(df)
+
+    # script_data = to_dict(api.script_datum(df.data_hash[1]))
+    # pprint.pprint(script_data, indent=2)
+
+    # print(Address(bech32=df.address[0]))
+    for row in df.amount:
+        print(row)
+
+    # print(
+    #     cbor2.loads(
+    #         script_data["json_value"]["fields"][0]["fields"][0]["fields"][0][
+    #             "bytes"
+    #         ].encode()
+    #     )
+    # )

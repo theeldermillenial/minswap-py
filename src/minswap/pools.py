@@ -1,4 +1,7 @@
-"""Functions for processing minswap pools."""
+"""Functions for processing minswap pools.
+
+This mostly reflects the pool functionality in the minswap-blockfrostadapter.
+"""
 import logging
 from datetime import datetime
 from decimal import Decimal
@@ -18,14 +21,10 @@ from minswap.models import (
     AssetTransaction,
     Output,
     TxContentUtxo,
-    TxIn,
 )
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)-8s - %(levelname)-8s - %(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
@@ -69,10 +68,24 @@ def is_valid_pool_output(utxo: AddressUtxoContentItem):
         return False
 
 
+class PoolTransactionReference(BaseModel):
+    """A reference to a pool transaction state."""
+
+    tx_index: int
+    tx_hash: str
+    block_height: int
+    time: datetime
+
+    class Config:  # noqa: D106
+        allow_mutation = False
+        extra = "forbid"
+
+
 class PoolState(BaseModel):
     """A particular pool state, either current or historical."""
 
-    tx_in: TxIn
+    tx_index: int
+    tx_hash: str
     assets: Assets
     pool_nft: Assets
     minswap_nft: Assets
@@ -80,10 +93,11 @@ class PoolState(BaseModel):
 
     class Config:  # noqa: D106
         allow_mutation = False
+        extra = "forbid"
 
     @root_validator(pre=True)
     def translate_address(cls, values):  # noqa: D102
-        assets: Assets = values["assets"]
+        assets = values["assets"]
 
         # Find the NFT that assigns the pool a unique id
         nfts = [asset for asset in assets if asset.startswith(addr.POOL_NFT_POLICY_ID)]
@@ -276,24 +290,13 @@ class PoolState(BaseModel):
 
         # Estimate the price impact
         price_numerator: int = (
-            reserve_out * numerator * 887
+            reserve_out * numerator * 997
             - asset.quantity() * denominator * reserve_in * 1000
         )
         price_denominator: int = reserve_out * numerator * 1000
         price_impact: float = price_numerator / price_denominator
 
         return amount_in, price_impact
-
-
-class PoolHistory(BaseModel):
-    """A reference to a pool transaction state."""
-
-    tx_in: TxIn
-    block_height: int
-    time: datetime
-
-    class Config:  # noqa: D106
-        allow_mutation = False
 
 
 def get_pools(
@@ -306,7 +309,7 @@ def get_pools(
             output. Default is False.
 
     Returns:
-        A list of pools, and a list of non-pool UTxOs
+        A list of pools, and a list of non-pool UTxOs (if specified)
     """
     env = dotenv_values()
     api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
@@ -324,7 +327,8 @@ def get_pools(
         if is_valid_pool_output(utxo):
             pools.append(
                 PoolState(
-                    tx_in=TxIn(tx_hash=utxo.tx_hash, tx_index=utxo.output_index),
+                    tx_hash=utxo.tx_hash,
+                    tx_index=utxo.output_index,
                     assets=Assets(values=utxo.amount),
                     datum_hash=utxo.data_hash,
                 )
@@ -365,7 +369,8 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
     check_valid_pool_output(pool_utxo)
 
     out_state = PoolState(
-        tx_in=TxIn(tx_hash=tx_hash, tx_index=utxo.output_index),
+        tx_hash=tx_hash,
+        tx_index=utxo.output_index,
         assets=Assets(values=utxo.amount),
         datum_hash=utxo.data_hash,
     )
@@ -398,9 +403,12 @@ def get_pool_by_id(pool_id: str) -> Optional[PoolState]:
     return get_pool_in_tx(tx_hash=nft_txs.tx_hash)
 
 
-def get_pool_history(
-    pool_id: str, page: int = 1, count: int = 100, order: str = "desc"
-) -> List[PoolHistory]:
+def get_pool_transactions(
+    pool_id: str,
+    page: int = 1,
+    count: int = 100,
+    order: str = "desc",
+) -> List[PoolTransactionReference]:
     """Get a list of pool history transactions.
 
     This returns only a list of `PoolHistory` items, each providing enough information
@@ -419,21 +427,21 @@ def get_pool_history(
     api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
 
     nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
+
     nft_txs = api.asset_transactions(
         nft, count=count, page=page, order=order, return_type="json"
     )
 
-    if len(nft_txs) == 0:
-        return []
-
     pool_snapshots = []
     for ph in nft_txs:
         at = AssetTransaction.parse_obj(ph)
+
         pool_snapshots.append(
-            PoolHistory(
-                tx_in=TxIn(tx_hash=at.tx_hash, tx_index=at.tx_index),
+            PoolTransactionReference(
+                tx_hash=at.tx_hash,
+                tx_index=at.tx_index,
                 block_height=at.block_height,
-                time=datetime.fromtimestamp(at.block_time),
+                time=datetime.utcfromtimestamp(at.block_time),
             )
         )
 

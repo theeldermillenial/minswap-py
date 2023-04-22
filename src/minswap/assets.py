@@ -10,9 +10,10 @@ import blockfrost
 from dotenv import dotenv_values
 
 from minswap.models import AssetIdentity, Assets
+from minswap.utils import save_timestamp
 
-cache_path = Path(__file__).parent.joinpath("data/assets")
-cache_path.mkdir(exist_ok=True, parents=True)
+ASSET_CACHE_PATH = Path(__file__).parent.joinpath("data/assets")
+ASSET_CACHE_PATH.mkdir(exist_ok=True, parents=True)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)-8s - %(levelname)-8s - %(message)s",
@@ -21,6 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger("minswap.assets")
 
 
+@save_timestamp(ASSET_CACHE_PATH, 0, "asset")
 def update_asset_info(asset: str) -> Optional[AssetIdentity]:
     """Get the latest asset information from the Cardano chain.
 
@@ -30,7 +32,7 @@ def update_asset_info(asset: str) -> Optional[AssetIdentity]:
     Returns:
         AssetIdentity
     """
-    asset_path = cache_path.joinpath(asset)
+    asset_path = ASSET_CACHE_PATH.joinpath(asset)
 
     env = dotenv_values()
     api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
@@ -38,7 +40,7 @@ def update_asset_info(asset: str) -> Optional[AssetIdentity]:
 
     asset_id = AssetIdentity.parse_obj(info)
 
-    with open(asset_path, "w") as fw:
+    with open(asset_path.joinpath("asset.json"), "w") as fw:
         json.dump(asset_id.dict(), fw, indent=2)
 
     return asset_id
@@ -59,7 +61,7 @@ def get_asset_info(asset: str, update_cache=False) -> Optional[AssetIdentity]:
     Returns:
         The asset identity if available, else `None`.
     """
-    asset_path = cache_path.joinpath(asset)
+    asset_path = ASSET_CACHE_PATH.joinpath(asset).joinpath("asset.json")
     if update_cache or not asset_path.exists():
         return update_asset_info(asset)
     else:
@@ -188,17 +190,20 @@ def circulating_asset(
     env = dotenv_values()
     api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
 
-    hashes = [tx["tx_hash"] for tx in api.asset_history(asset, return_type="json")]
+    asset_updates = api.asset_history(asset, return_type="json")
 
     addresses = set()
     minted = 0
-    for i, h in enumerate(hashes):
-        utxos = api.transaction_utxos(h, return_type="json")
+    for h in asset_updates:
+        utxos = api.transaction_utxos(h["tx_hash"], return_type="json")
 
         for out_utxo in utxos["outputs"]:
             for token in out_utxo["amount"]:
                 if token["unit"] == asset:
-                    minted += int(token["quantity"])
+                    if h["action"] == "minted":
+                        minted += int(token["quantity"])
+                    else:
+                        minted -= int(token["quantity"])
                     addresses.add(out_utxo["address"])
                     break
 

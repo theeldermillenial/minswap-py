@@ -138,8 +138,6 @@ class Assets(BaseDict):
 
     @root_validator(pre=True)
     def _digest_assets(cls, values):
-
-        root: Dict[str, int] = {}
         if "__root__" in values:
             root = values["__root__"]
         elif "values" in values and isinstance(values["values"], list):
