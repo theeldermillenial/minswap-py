@@ -427,7 +427,6 @@ def get_pool_transactions(
     api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
 
     nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
-
     nft_txs = api.asset_transactions(
         nft, count=count, page=page, order=order, return_type="json"
     )
