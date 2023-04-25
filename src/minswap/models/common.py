@@ -95,10 +95,7 @@ class BaseDict(BaseList):
         return self.__root__.values()
 
     def __getitem__(self, item):  # noqa
-        try:
-            super().__getitem__(item)
-        except KeyError:
-            self.__root__.items()[item]
+        return self.__root__.get(item, 0)
 
 
 class TxIn(BaseModel):
@@ -149,6 +146,14 @@ class Assets(BaseDict):
         )
 
         return {"__root__": root}
+
+    def __add__(a, b):
+        """Add two assets."""
+        intersection = set(a.keys()) | set(b.keys())
+
+        result = {key: a[key] + b[key] for key in intersection}
+
+        return Assets(**result)
 
 
 class Address(BaseModel):

@@ -34,7 +34,7 @@ logging.getLogger("minswap").setLevel(logging.DEBUG)
 # Maximum number of API calls allowed for this script to run
 # If only using this to update transactions once per day, and it's the only code using
 # Blockfrost, this can be set to 50,000 for a free account.
-max_calls = 20000
+max_calls = 48000
 total_calls = 0
 
 # Get a list of pools
@@ -51,10 +51,12 @@ for pool in pools:
         "Getting transaction for pool: "
         + f"{asset_ticker(pool.unit_a)}-{asset_ticker(pool.unit_b)}"
     )
-    calls = cache_transactions(pool.id, max_calls - total_calls, True)
+    calls = cache_transactions(pool.id, max_calls - total_calls)
 
     cooloff = min(50, calls / 10)
     print(f"Made {calls} calls. Cooling off {cooloff:0.2f}s before starting next pool")
     time.sleep(cooloff)
 
     total_calls += calls
+
+print(f"Finished! Made {total_calls} API calls total.")

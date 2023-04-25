@@ -76,6 +76,14 @@ class PoolTransactionReference(BaseModel):
     block_height: int
     time: datetime
 
+    @root_validator(pre=True)
+    def _validator(cls, values):
+        if "block_time" in values:
+            values["time"] = datetime.utcfromtimestamp(values["block_time"])
+            values.pop("block_time")
+
+        return values
+
     class Config:  # noqa: D106
         allow_mutation = False
         extra = "forbid"
@@ -401,47 +409,3 @@ def get_pool_by_id(pool_id: str) -> Optional[PoolState]:
     nft_txs = AssetTransaction.parse_obj(nft_txs[0])
 
     return get_pool_in_tx(tx_hash=nft_txs.tx_hash)
-
-
-def get_pool_transactions(
-    pool_id: str,
-    page: int = 1,
-    count: int = 100,
-    order: str = "desc",
-) -> List[PoolTransactionReference]:
-    """Get a list of pool history transactions.
-
-    This returns only a list of `PoolHistory` items, each providing enough information
-    to track down a particular pool transaction.
-
-    Args:
-        pool_id: The unique pool id.
-        page: The index of paginated results to return. Defaults to 1.
-        count: The total number of results to return. Defaults to 100.
-        order: Must be "asc" or "desc". Defaults to "desc".
-
-    Returns:
-        A list of `PoolHistory` items.
-    """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
-    nft_txs = api.asset_transactions(
-        nft, count=count, page=page, order=order, return_type="json"
-    )
-
-    pool_snapshots = []
-    for ph in nft_txs:
-        at = AssetTransaction.parse_obj(ph)
-
-        pool_snapshots.append(
-            PoolTransactionReference(
-                tx_hash=at.tx_hash,
-                tx_index=at.tx_index,
-                block_height=at.block_height,
-                time=datetime.utcfromtimestamp(at.block_time),
-            )
-        )
-
-    return pool_snapshots
