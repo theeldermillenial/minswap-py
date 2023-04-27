@@ -1,6 +1,6 @@
 import pytest
 
-import minswap.pools as pools
+from minswap import pools
 
 test_pools = {
     "ADA-MIN": "6aa2153e1ae896a95539c9d62f76cedcdabdcdf144e564b8955f609d660cf6a2",
@@ -14,7 +14,6 @@ test_pools = {
 
 @pytest.mark.parametrize("return_non_pools", [True, False])
 def test_get_pools(return_non_pools: bool):
-
     p = pools.get_pools(return_non_pools)
 
     if return_non_pools:
@@ -27,7 +26,6 @@ def test_get_pools(return_non_pools: bool):
 
 @pytest.mark.parametrize(("pool", "pool_id"), list(test_pools.items()))
 def test_price(pool: str, pool_id: str):
-
     pool_state = pools.get_pool_by_id(pool_id)
 
     assert pool_state is not None

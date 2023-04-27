@@ -15,7 +15,7 @@ from dotenv import dotenv_values
 from pyarrow import TimestampScalar
 
 from minswap import addr
-from minswap.pools import PoolTransactionReference
+from minswap.models import PoolTransactionReference
 from minswap.utils import save_timestamp
 
 logger = logging.getLogger(__name__)

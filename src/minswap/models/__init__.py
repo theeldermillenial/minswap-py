@@ -7,6 +7,7 @@ from minswap.models.common import (  # noqa: F401
     AssetIdentity,
     Assets,
     Output,
+    PoolTransactionReference,
     TxContentUtxo,
     TxIn,
 )

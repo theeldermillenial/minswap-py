@@ -66,6 +66,27 @@ class PoolHistory(BaseModel):
     time: datetime
 
 
+class PoolTransactionReference(BaseModel):
+    """A reference to a pool transaction state."""
+
+    tx_index: int
+    tx_hash: str
+    block_height: int
+    time: datetime
+
+    @root_validator(pre=True)
+    def _validator(cls, values):
+        if "block_time" in values:
+            values["time"] = datetime.utcfromtimestamp(values["block_time"])
+            values.pop("block_time")
+
+        return values
+
+    class Config:  # noqa: D106
+        allow_mutation = False
+        extra = "forbid"
+
+
 class BaseList(BaseModel):
     """Utility class for list models."""
 
@@ -152,6 +173,14 @@ class Assets(BaseDict):
         intersection = set(a.keys()) | set(b.keys())
 
         result = {key: a[key] + b[key] for key in intersection}
+
+        return Assets(**result)
+
+    def __sub__(a, b):
+        """Add two assets."""
+        intersection = set(a.keys()) | set(b.keys())
+
+        result = {key: a[key] - b[key] for key in intersection}
 
         return Assets(**result)
 

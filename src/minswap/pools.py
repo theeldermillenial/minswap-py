@@ -3,7 +3,6 @@
 This mostly reflects the pool functionality in the minswap-blockfrostadapter.
 """
 import logging
-from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional, Tuple, Union
 
@@ -66,27 +65,6 @@ def is_valid_pool_output(utxo: AddressUtxoContentItem):
         return True
     except ValueError:
         return False
-
-
-class PoolTransactionReference(BaseModel):
-    """A reference to a pool transaction state."""
-
-    tx_index: int
-    tx_hash: str
-    block_height: int
-    time: datetime
-
-    @root_validator(pre=True)
-    def _validator(cls, values):
-        if "block_time" in values:
-            values["time"] = datetime.utcfromtimestamp(values["block_time"])
-            values.pop("block_time")
-
-        return values
-
-    class Config:  # noqa: D106
-        allow_mutation = False
-        extra = "forbid"
 
 
 class PoolState(BaseModel):
