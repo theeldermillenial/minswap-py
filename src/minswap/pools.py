@@ -4,8 +4,9 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional, Tuple, Union
 
+import os
 import blockfrost
-from dotenv import dotenv_values
+from dotenv import load_dotenv
 from pydantic import BaseModel, root_validator
 
 from minswap import addr
@@ -20,6 +21,8 @@ from minswap.models import (
     TxContentUtxo,
     TxIn,
 )
+
+load_dotenv()
 
 logging.basicConfig(
     format="%(asctime)s - %(name)-8s - %(levelname)-8s - %(message)s",
@@ -161,8 +164,8 @@ class PoolState(BaseModel):
         logger.debug(f"_get_asset_info: {value}")
         if value == "lovelace":
             return "lovelace"
-        env = dotenv_values()
-        api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
+        
+        api = blockfrost.BlockFrostApi(os.getenv("PROJECT_ID"))
         info = api.asset(value, return_type="json")
         return bytes.fromhex(AssetIdentity.parse_obj(info).asset_name).decode()
 
@@ -308,8 +311,8 @@ def get_pools(
     Returns:
         A list of pools, and a list of non-pool UTxOs
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
+    
+    api = blockfrost.BlockFrostApi(os.getenv("PROJECT_ID"))
 
     utxos_raw = api.address_utxos(
         addr.POOL.address.encode(), gather_pages=True, order="asc", return_type="json"
@@ -349,8 +352,8 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
     Returns:
         A `PoolState` if a pool is token is found, and `None` otherwise.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
+    
+    api = blockfrost.BlockFrostApi(os.getenv("PROJECT_ID"))
 
     pool_tx = api.transaction_utxos(tx_hash, return_type="json")
     pool_utxo = None
@@ -382,8 +385,8 @@ def get_pool_by_id(pool_id: str) -> Optional[PoolState]:
     Returns:
         A `PoolState` if the pool can be found, and `None` otherwise.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
+    
+    api = blockfrost.BlockFrostApi(os.getenv("PROJECT_ID"))
 
     nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
     nft_txs = api.asset_transactions(
@@ -415,8 +418,8 @@ def get_pool_history(
     Returns:
         A list of `PoolHistory` items.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
+    
+    api = blockfrost.BlockFrostApi(os.getenv("PROJECT_ID"))
 
     nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
     nft_txs = api.asset_transactions(

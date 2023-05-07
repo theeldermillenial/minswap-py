@@ -1,10 +1,11 @@
+import os
 import blockfrost
-from dotenv import dotenv_values
+from dotenv import load_dotenv
 
-
+load_dotenv()
 def api():
 
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
+    
+    api = blockfrost.BlockFrostApi(os.getenv("PROJECT_ID"))
 
     return api

@@ -6,10 +6,13 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Dict, MutableSet, Optional, Tuple, Union
 
+import os
 import blockfrost
-from dotenv import dotenv_values
+from dotenv import load_dotenv
 
 from minswap.models import AssetIdentity, Assets
+
+load_dotenv()
 
 cache_path = Path(__file__).parent.joinpath("data/assets")
 cache_path.mkdir(exist_ok=True, parents=True)
@@ -32,8 +35,8 @@ def update_asset_info(asset: str) -> Optional[AssetIdentity]:
     """
     asset_path = cache_path.joinpath(asset)
 
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
+    
+    api = blockfrost.BlockFrostApi(os.getenv("PROJECT_ID"))
     info = api.asset(asset, return_type="json")
 
     asset_id = AssetIdentity.parse_obj(info)
@@ -185,8 +188,8 @@ def circulating_asset(
         The first output is the amount of circulating asset, the second output is the
             total minted asset.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
+    
+    api = blockfrost.BlockFrostApi(os.getenv("PROJECT_ID"))
 
     hashes = [tx["tx_hash"] for tx in api.asset_history(asset, return_type="json")]
 
