@@ -87,6 +87,40 @@ class PoolTransactionReference(BaseModel):
         extra = "forbid"
 
 
+class Transaction(blockfrost_models.TxContent):
+    """Transaction Content."""
+
+    block_time: datetime = blockfrost_models.TxContent.__fields__[
+        "block_time"
+    ]  # type: ignore
+    invalid_before: Optional[str]  # type: ignore
+    """
+    Left (included) endpoint of the timelock validity intervals
+    """
+    invalid_hereafter: Optional[str] = Field(None, example="13885913")  # type: ignore
+    """
+    Right (excluded) endpoint of the timelock validity intervals
+    """
+
+    @root_validator(pre=True)
+    def _validator(cls, values):
+        values["block_time"] = datetime.utcfromtimestamp(values["block_time"])
+
+        return values
+
+
+class AssetHistoryReference(BaseModel):
+    """A reference to a pool transaction state."""
+
+    tx_hash: str
+    action: str
+    amount: int
+
+    class Config:  # noqa: D106
+        allow_mutation = False
+        extra = "forbid"
+
+
 class BaseList(BaseModel):
     """Utility class for list models."""
 

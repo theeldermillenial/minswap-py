@@ -203,6 +203,7 @@ def get_pol_utxo_cache(pol_addr: str) -> Optional[vaex.DataFrame]:
 
 
 def get_pol_transaction_history(
+    pol_addr: str,
     page: int = 1,
     count: int = 100,
     order: str = "asc",
@@ -224,9 +225,8 @@ def get_pol_transaction_history(
     env = dotenv_values()
     api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
 
-    addr = POL_MINADA_LP.address.encode()
     txs = api.address_transactions(
-        addr, count=count, page=page, order=order, return_type="json"
+        pol_addr, count=count, page=page, order=order, return_type="json"
     )
 
     tx = [PoolTransactionReference.parse_obj(tx) for tx in txs]
@@ -312,7 +312,9 @@ def cache_pol_transactions(pol_addr: str, max_calls: int = 1000) -> int:
     logger.debug(f"start page: {page}")
 
     def get_transaction_batch(page: int) -> List[PoolTransactionReference]:
-        tx = get_pol_transaction_history(page=page, count=100, order="asc")
+        tx = get_pol_transaction_history(
+            pol_addr=pol_addr, page=page, count=100, order="asc"
+        )
 
         return tx
 

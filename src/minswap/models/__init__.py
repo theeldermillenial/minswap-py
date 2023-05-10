@@ -4,10 +4,12 @@ from minswap.models.common import (  # noqa: F401
     Address,
     AddressUtxoContent,
     AddressUtxoContentItem,
+    AssetHistoryReference,
     AssetIdentity,
     Assets,
     Output,
     PoolTransactionReference,
+    Transaction,
     TxContentUtxo,
     TxIn,
 )
