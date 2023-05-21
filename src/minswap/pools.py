@@ -26,6 +26,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+class InvalidPool(ValueError):
+    """Error thrown when a pool UTXO cannot be validated.
+
+    This error is generally thrown when the address associated with a pool is invalid
+    or when a UTXO does not have a valid pool NFT.
+    """
+
+
 def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
     """Determine if the pool address is valid.
 
@@ -41,7 +49,7 @@ def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
     if not correct_address:
         message = f"Invalid pool address. Expected {addr.POOL}"
         logger.debug(message)
-        raise ValueError(message)
+        raise InvalidPool(message)
 
     # Check to make sure the pool has 1 factory token
     for asset in utxo.amount:
@@ -55,7 +63,7 @@ def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
         logger.debug(message)
         logger.debug(f"asset.unit={asset.unit}")
         logger.debug(f"factory={addr.FACTORY_POLICY_ID}{addr.FACTORY_ASSET_NAME}")
-        raise ValueError(message)
+        raise InvalidPool(message)
 
 
 def is_valid_pool_output(utxo: AddressUtxoContentItem):
@@ -63,7 +71,7 @@ def is_valid_pool_output(utxo: AddressUtxoContentItem):
     try:
         check_valid_pool_output(utxo)
         return True
-    except ValueError:
+    except InvalidPool:
         return False
 
 

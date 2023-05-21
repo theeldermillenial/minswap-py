@@ -14,14 +14,14 @@ logging.getLogger("minswap").setLevel(logging.DEBUG)
 # Maximum number of API calls allowed for this script to run
 # If only using this to update transactions once per day, and it's the only code using
 # Blockfrost, this can be set to 50,000 for a free account.
-max_calls = 49000
+max_calls = 20000
 total_calls = 0
 
 # Get a list of pools
 pools = get_pools()
 assert isinstance(pools, list)
 
-for ind, pool in enumerate(pools[1000:]):
+for ind, pool in enumerate(pools):
     if total_calls >= max_calls:
         print("Reached maximum requests. Exiting script.")
         break
