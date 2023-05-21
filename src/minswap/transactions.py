@@ -16,7 +16,7 @@ from pyarrow import TimestampScalar
 
 from minswap import addr
 from minswap.models import PoolTransactionReference
-from minswap.utils import save_timestamp
+from minswap.utils import BlockfrostBackend, save_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,9 @@ def get_transaction_cache(pool_id: str) -> Optional[vaex.DataFrame]:
         A memory mapped vaex dataframe.
     """
     cache_path = TRANSACTION_CACHE_PATH.joinpath(pool_id)
-    try:
+    if len(list(cache_path.glob("[0-9][0-9][0-9][0-9][0-9][0-9].arrow"))) > 0:
         df = vaex.open(cache_path.joinpath("[0-9][0-9][0-9][0-9][0-9][0-9].arrow"))
-    except OSError:
+    else:
         df = None
 
     return df
@@ -161,6 +161,7 @@ def _cache_utxos(
     return utxos[index:]
 
 
+@BlockfrostBackend.limiter
 def get_pool_transaction_history(
     pool_id: str,
     page: int = 1,
@@ -181,11 +182,9 @@ def get_pool_transaction_history(
     Returns:
         A list of `PoolHistory` items.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
 
     nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
-    nft_txs = api.asset_transactions(
+    nft_txs = BlockfrostBackend.api.asset_transactions(
         nft, count=count, page=page, order=order, return_type="json"
     )
 
@@ -258,9 +257,6 @@ def cache_transactions(pool_id: str, max_calls: int = 1000) -> int:
     cache_path = TRANSACTION_CACHE_PATH.joinpath(pool_id)
     now = datetime.utcnow()
 
-    # blockfrost allows 10 calls/sec, with 500 call bursts with a 10 call/sec cooloff
-    calls_allowed = 500
-
     # Load existing cache
     cache = get_transaction_cache(pool_id=pool_id)
 
@@ -319,33 +315,11 @@ def cache_transactions(pool_id: str, max_calls: int = 1000) -> int:
         done = False
         num_calls = 0
         transactions: List[PoolTransactionReference] = []
-        call_start = None
-        call_end = None
         while not done and num_calls < max_calls:
             if num_calls + call_batch > max_calls:
                 call_batch = max_calls - num_calls
             num_calls += call_batch
             logger.debug(f"Calling page range: {page}-{page+call_batch}")
-
-            # Rate limit the calling
-            call_end = datetime.now()
-            calls_allowed = calls_allowed - call_batch
-            if call_start is not None:
-                call_diff = call_end - call_start
-
-                # Cooloff is 10 requests per second
-                calls_allowed += call_diff.total_seconds() * 10
-
-                if calls_allowed < 0:
-                    delay_time = 5 * call_batch / 10
-                    logger.warning(
-                        "Nearing rate limit, waiting "
-                        + f"{delay_time:0.2f} seconds to resume."
-                    )
-                    time.sleep(delay_time)
-                    calls_allowed += (datetime.now() - call_end).total_seconds() * 10
-
-            call_start = datetime.now()
 
             # Make the calls
             threads = executor.map(

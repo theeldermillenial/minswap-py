@@ -21,20 +21,15 @@ account for this and will pause requests when getting near this limit. A warning
 shown to indicate to the user that the code is waiting to cooloff, and this is expected
 behavior that can be ignored in most cases.
 """
-import logging
-import time
+from concurrent.futures import ThreadPoolExecutor
 
-from minswap.assets import asset_ticker
+from tqdm import tqdm
+
 from minswap.pools import get_pools
 from minswap.transactions import cache_transactions
 
 # Just to see what minswap-py is doing under the hood...
-logging.getLogger("minswap").setLevel(logging.DEBUG)
-
-# Maximum number of API calls allowed for this script to run
-# If only using this to update transactions once per day, and it's the only code using
-# Blockfrost, this can be set to 50,000 for a free account.
-max_calls = 48000
+# logging.getLogger("minswap").setLevel(logging.DEBUG)
 total_calls = 0
 
 # Get a list of pools
@@ -42,21 +37,22 @@ pools = get_pools()
 assert isinstance(pools, list)
 
 # Iterate over the pools and cache transations
-for pool in pools:
-    if total_calls >= max_calls:
-        print("Reached maximum requests. Exiting script.")
-        break
+# for pool in pools:
+#     if total_calls >= max_calls:
+#         print("Reached maximum requests. Exiting script.")
+#         break
 
-    print(
-        "Getting transaction for pool: "
-        + f"{asset_ticker(pool.unit_a)}-{asset_ticker(pool.unit_b)}"
-    )
-    calls = cache_transactions(pool.id, max_calls - total_calls)
+#     print(
+#         "Getting transaction for pool: "
+#         + f"{asset_ticker(pool.unit_a)}-{asset_ticker(pool.unit_b)}"
+#     )
+#     calls = cache_transactions(pool.id, max_calls - total_calls)
 
-    cooloff = min(50, calls / 10)
-    print(f"Made {calls} calls. Cooling off {cooloff:0.2f}s before starting next pool")
-    time.sleep(cooloff)
+total_calls = 0
+with ThreadPoolExecutor() as executor:
+    threads = executor.map(cache_transactions, [pool.id for pool in pools])
 
-    total_calls += calls
+    for thread in tqdm(threads, total=len(pools)):
+        total_calls += thread
 
 print(f"Finished! Made {total_calls} API calls total.")
