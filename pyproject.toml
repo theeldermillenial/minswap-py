@@ -20,6 +20,7 @@ python-dotenv = "0.21.1"
 llvmlite = "^0.39.1"
 numba = "^0.56.4"
 vaex = "^4.16.0"
+tqdm = "^4.65.0"
 
 [tool.poetry.group.dev.dependencies]
 nox = "2022.11.21"
