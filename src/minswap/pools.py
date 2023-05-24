@@ -6,8 +6,6 @@ import logging
 from decimal import Decimal
 from typing import List, Optional, Tuple, Union
 
-import blockfrost
-from dotenv import dotenv_values
 from pydantic import BaseModel, root_validator
 
 from minswap import addr
@@ -21,6 +19,7 @@ from minswap.models import (
     Output,
     TxContentUtxo,
 )
+from minswap.utils import BlockfrostBackend
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -169,9 +168,7 @@ class PoolState(BaseModel):
         logger.debug(f"_get_asset_info: {value}")
         if value == "lovelace":
             return "lovelace"
-        env = dotenv_values()
-        api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-        info = api.asset(value, return_type="json")
+        info = BlockfrostBackend.api().asset(value, return_type="json")
         return bytes.fromhex(AssetIdentity.parse_obj(info).asset_name).decode()
 
     @property
@@ -305,10 +302,7 @@ def get_pools(
     Returns:
         A list of pools, and a list of non-pool UTxOs (if specified)
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    utxos_raw = api.address_utxos(
+    utxos_raw = BlockfrostBackend.api().address_utxos(
         addr.POOL.address.encode(), gather_pages=True, order="asc", return_type="json"
     )
 
@@ -347,10 +341,7 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
     Returns:
         A `PoolState` if a pool is token is found, and `None` otherwise.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    pool_tx = api.transaction_utxos(tx_hash, return_type="json")
+    pool_tx = BlockfrostBackend.api().transaction_utxos(tx_hash, return_type="json")
     pool_utxo = None
     for utxo in TxContentUtxo.parse_obj(pool_tx).outputs:
         if utxo.address == addr.POOL.bech32:
@@ -381,11 +372,8 @@ def get_pool_by_id(pool_id: str) -> Optional[PoolState]:
     Returns:
         A `PoolState` if the pool can be found, and `None` otherwise.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
     nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
-    nft_txs = api.asset_transactions(
+    nft_txs = BlockfrostBackend.api().asset_transactions(
         nft, count=1, page=1, order="desc", return_type="json"
     )
 

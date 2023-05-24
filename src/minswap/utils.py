@@ -156,9 +156,9 @@ def load_timestamp(path: Path) -> datetime:
     return timestamp
 
 
-def _get_cache(cache_path: Path) -> Optional[vaex.DataFrame]:
-    if len(list(cache_path.glob(CACHE_GLOB))) > 0:
-        df = vaex.open(cache_path.joinpath(CACHE_GLOB))
+def _get_cache(cache_path: Path, glob: str = CACHE_GLOB) -> Optional[vaex.DataFrame]:
+    if len(list(cache_path.glob(glob))) > 0:
+        df = vaex.open(cache_path.joinpath(glob))
     else:
         df = None
 
