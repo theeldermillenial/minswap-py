@@ -24,6 +24,7 @@ behavior that can be ignored in most cases.
 from concurrent.futures import ThreadPoolExecutor
 
 from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from minswap.pools import get_pools
 from minswap.transactions import cache_transactions
@@ -52,7 +53,8 @@ total_calls = 0
 with ThreadPoolExecutor() as executor:
     threads = executor.map(cache_transactions, [pool.id for pool in pools])
 
-    for thread in tqdm(threads, total=len(pools)):
-        total_calls += thread
+    with logging_redirect_tqdm():
+        for thread in tqdm(threads, total=len(pools)):
+            total_calls += thread
 
 print(f"Finished! Made {total_calls} API calls total.")

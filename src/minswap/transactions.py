@@ -1,23 +1,31 @@
 """Functions for getting cardano transactions."""
+from __future__ import annotations
+
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Union
 
 import numpy
 import pandas
 import vaex
-from pyarrow import TimestampScalar
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from minswap import addr
 from minswap.assets import asset_ticker
 from minswap.models import PoolTransactionReference
-from minswap.pools import PoolState
-from minswap.utils import BlockfrostBackend, _get_cache, save_timestamp
+from minswap.utils import (
+    BlockfrostBackend,
+    _cache_timestamp_data,
+    _get_cache,
+    save_timestamp,
+)
+
+if TYPE_CHECKING:
+    from minswap.pools import PoolState
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +36,7 @@ TRANSACTION_UTXO_CACHE_PATH = Path(__file__).parent.joinpath("data/utxos")
 TRANSACTION_UTXO_CACHE_PATH.mkdir(exist_ok=True, parents=True)
 
 
-def get_transaction_cache(pool_id: str) -> Optional[vaex.DataFrame]:
+def get_transaction_cache(pool: Union[PoolState, str]) -> Optional[vaex.DataFrame]:
     """Get a vaex dataframe of locally cached transaction data.
 
     This function returns a vaex dataframe containing transaction data for the
@@ -38,15 +46,16 @@ def get_transaction_cache(pool_id: str) -> Optional[vaex.DataFrame]:
     associated with a particular pool.
 
     Args:
-        pool_id: The pool id requesting for a dataframe.
+        pool: A pool state object or pool id requested for a dataframe.
 
     Returns:
         A memory mapped vaex dataframe.
     """
+    pool_id = pool if isinstance(pool, str) else pool.id
     return _get_cache(cache_path=TRANSACTION_CACHE_PATH.joinpath(pool_id))
 
 
-def get_utxo_cache(pool_id: str) -> Optional[vaex.DataFrame]:
+def get_utxo_cache(pool: Union[PoolState, str]) -> Optional[vaex.DataFrame]:
     """Get a vaex dataframe of locally cached transaction data.
 
     This function returns a vaex dataframe containing transaction data for the
@@ -56,102 +65,17 @@ def get_utxo_cache(pool_id: str) -> Optional[vaex.DataFrame]:
     associated with a particular pool.
 
     Args:
-        pool_id: The pool id requesting for a dataframe.
+        pool: A pool state object or pool id requested for a dataframe.
 
     Returns:
         A memory mapped vaex dataframe.
     """
+    pool_id = pool if isinstance(pool, str) else pool.id
     return _get_cache(cache_path=TRANSACTION_UTXO_CACHE_PATH.joinpath(pool_id))
 
 
-def _cache_transactions(
-    transactions: List[PoolTransactionReference], cache_path: Path
-) -> List[PoolTransactionReference]:
-    if transactions[0].time.month == transactions[-1].time.month:
-        index = len(transactions)
-    else:
-        for index in range(len(transactions) - 1):
-            if transactions[index].time.month != transactions[index + 1].time.month:
-                index += 1
-                break
-
-    # Convert data to a vaex dataframe
-    df = pandas.DataFrame([d.dict() for d in transactions[:index]])
-    df["time"] = df.time.astype("datetime64[s]")
-
-    # Define the output path
-    cache_name = (
-        f"{transactions[0].time.year}"
-        + f"{str(transactions[0].time.month).zfill(2)}.arrow"
-    )
-    path = cache_path.joinpath(cache_name)
-
-    # If the cache exists, append to it
-    if path.exists():
-        cache_df = pandas.read_feather(path)
-        tmp_path = path.with_name(path.name.replace(".arrow", "_temp.arrow"))
-        threshold = cache_df.time.astype("datetime64[s]").values[-1]
-        filtered = df[df.time > threshold]
-        if len(filtered) > 0:
-            pandas.concat([cache_df, filtered], ignore_index=True).to_feather(tmp_path)
-            path.unlink()
-            tmp_path.rename(path)
-
-    # Otherwise, just dump the whole dataframe to cache
-    else:
-        df.to_feather(path)
-
-    return transactions[index:]
-
-
-def _cache_utxos(
-    utxos: List[Tuple[TimestampScalar, pandas.DataFrame]], cache_path: Path
-) -> List[Tuple[TimestampScalar, pandas.DataFrame]]:
-    if utxos[0][0].as_py().month == utxos[-1][0].as_py().month:
-        index = len(utxos)
-    else:
-        for index in range(len(utxos) - 1):
-            if utxos[index][0].as_py().month != utxos[index + 1][0].as_py().month:
-                index += 1
-                break
-
-    # Add time to all dataframes
-    dfs = []
-    for t, df in utxos[:index]:
-        df["time"] = t.as_py()
-        df["time"] = df.time.astype("datetime64[s]")
-        dfs.append(df)
-
-    # Concatenate all dataframes
-    df = pandas.concat(dfs, ignore_index=True)
-
-    # Define the output path
-    cache_name = (
-        f"{utxos[0][0].as_py().year}"
-        + f"{str(utxos[0][0].as_py().month).zfill(2)}.arrow"
-    )
-    path = cache_path.joinpath(cache_name)
-
-    # If the cache exists, append to it
-    if path.exists():
-        cache_df = pandas.read_feather(path)
-        tmp_path = path.with_name(path.name.replace(".arrow", "_temp.arrow"))
-        threshold = cache_df.time.astype("datetime64[s]").values[-1]
-        filtered = df[df.time > threshold]
-        if len(filtered) > 0:
-            pandas.concat([cache_df, filtered], ignore_index=True).to_feather(tmp_path)
-            path.unlink()
-            tmp_path.rename(path)
-
-    # Otherwise, just dump the whole dataframe to cache
-    else:
-        df.to_feather(path)
-
-    return utxos[index:]
-
-
 def get_pool_transaction_history(
-    pool_id: str,
+    pool: Union[PoolState, str],
     page: int = 1,
     count: int = 100,
     order: str = "desc",
@@ -162,7 +86,7 @@ def get_pool_transaction_history(
     to track down a particular pool transaction.
 
     Args:
-        pool_id: The unique pool id.
+        pool: A pool state object or pool id.
         page: The index of paginated results to return. Defaults to 1.
         count: The total number of results to return. Defaults to 100.
         order: Must be "asc" or "desc". Defaults to "desc".
@@ -170,6 +94,8 @@ def get_pool_transaction_history(
     Returns:
         A list of `PoolHistory` items.
     """
+    pool_id = pool if isinstance(pool, str) else pool.id
+
     nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
     nft_txs = BlockfrostBackend.api().asset_transactions(
         nft, count=count, page=page, order=order, return_type="json"
@@ -199,6 +125,7 @@ def get_utxo(
     """
     tx = BlockfrostBackend.api().transaction_utxos(tx_hash, return_type="json")
 
+    # TODO: Need to create a pydantic model for this
     df = (
         pandas.concat(
             [pandas.DataFrame(tx["inputs"]), pandas.DataFrame(tx["outputs"])],
@@ -216,7 +143,7 @@ def get_utxo(
 
 @save_timestamp(TRANSACTION_CACHE_PATH, 0, "pool_id")
 def cache_transactions(
-    pool_id: str, max_calls: int = BlockfrostBackend.remaining_calls()
+    pool: Union[str, PoolState], max_calls: int = BlockfrostBackend.remaining_calls()
 ) -> int:
     """Cache transactions for a pool.
 
@@ -230,8 +157,15 @@ def cache_transactions(
     estimate the number of API calls needed to update the cache. At the minimum, 1
     API call will be made.
 
+    Todo:
+        Change the way `max_calls` operates. The default should be None, which just runs
+            until the `BlockfrostBackend` runs out of requests. Then, the code should
+            run until either `max_calls` or the `BlockfrostBackend` runs out of
+            requests. Also add the option to allow `max_calls=-1` to turn off all
+            request limit checks.
+
     Args:
-        pool_id: The pool id to cache transactions for.
+        pool: The pool state or pool id to cache transactions for.
         max_calls: Maximum number of API calls to use. If this limit is reached before
             finding all transactions, it will cache the transactions it has found and
             return. Defaults to 1000.
@@ -240,11 +174,12 @@ def cache_transactions(
         The number of API calls made. To get the transaction cache, use the
             `get_transaction_cache` function.
     """
+    pool_id = pool if isinstance(pool, str) else pool.id
     cache_path = TRANSACTION_CACHE_PATH.joinpath(pool_id)
     now = datetime.utcnow()
 
     # Load existing cache
-    cache = get_transaction_cache(pool_id=pool_id)
+    cache = get_transaction_cache(pool=pool_id)
 
     if cache is not None:
         # Get the starting page based off existing data cache
@@ -292,7 +227,7 @@ def cache_transactions(
 
     def get_transaction_batch(page: int) -> List[PoolTransactionReference]:
         transactions = get_pool_transaction_history(
-            pool_id=pool_id, page=page, count=100, order="asc"
+            pool=pool_id, page=page, count=100, order="asc"
         )
 
         return transactions
@@ -302,8 +237,10 @@ def cache_transactions(
         num_calls = 0
         transactions: List[PoolTransactionReference] = []
         while not done and num_calls < max_calls:
+            # Exit if max_calls is reached
             if num_calls + call_batch > max_calls:
                 call_batch = max_calls - num_calls
+
             num_calls += call_batch
             logger.debug(f"Calling page range: {page}-{page+call_batch}")
 
@@ -330,7 +267,7 @@ def cache_transactions(
                     + f"{transactions[0].time.year}"
                     + f"{str(transactions[0].time.month).zfill(2)}"
                 )
-                transactions = _cache_transactions(transactions, cache_path)
+                transactions = _cache_timestamp_data(transactions, cache_path)
             page += call_batch
 
         if len(transactions) > 0:
@@ -339,14 +276,14 @@ def cache_transactions(
                 + f"{transactions[0].time.year}"
                 + f"{str(transactions[0].time.month).zfill(2)}"
             )
-            _cache_transactions(transactions, cache_path)
+            _cache_timestamp_data(transactions, cache_path)
 
     return num_calls
 
 
 @save_timestamp(TRANSACTION_UTXO_CACHE_PATH, 0, "pool_id")
 def cache_utxos(
-    pool_id: Union[PoolState, str],
+    pool: Union[PoolState, str],
     max_calls: int = BlockfrostBackend.remaining_calls(),
     progress: bool = False,
 ) -> int:
@@ -373,20 +310,16 @@ def cache_utxos(
         The number of API calls made. To get the utxos cache, use the
             `get_utxo_cache` function.
     """
-    if isinstance(pool_id, PoolState):
-        pool_state = pool_id
-        pool_id = pool_id.id
-    else:
-        pool_state = None
+    pool_id = pool if isinstance(pool, str) else pool.id
     cache_path = TRANSACTION_UTXO_CACHE_PATH.joinpath(pool_id)
 
     # Load existing cache
-    cache = get_transaction_cache(pool_id=pool_id)
+    cache = get_transaction_cache(pool=pool_id)
     if cache is None:
         return 0
 
     # Filter transactions to skip over previously cached data
-    utxo_cache = get_utxo_cache(pool_id=pool_id)
+    utxo_cache = get_utxo_cache(pool=pool_id)
     if utxo_cache is not None:
         init_length = len(cache)
         cache = cache[cache.time > numpy.datetime64(utxo_cache.time.values[-1].as_py())]
@@ -404,16 +337,16 @@ def cache_utxos(
 
     with ThreadPoolExecutor() as executor:
         num_calls = 0
-        tx_utxos: List[Tuple[pandas.Timestamp, pandas.DataFrame]] = []
+        tx_utxos: List[pandas.DataFrame] = []
 
         if progress:
             with logging_redirect_tqdm():
-                if pool_state is not None:
-                    ticker_a = asset_ticker(pool_state.unit_a)
-                    ticker_b = asset_ticker(pool_state.unit_b)
+                if not isinstance(pool, str):
+                    ticker_a = asset_ticker(pool.unit_a)
+                    ticker_b = asset_ticker(pool.unit_b)
                     desc = f"{ticker_a}/{ticker_b}"
                 else:
-                    desc = f"Getting UTXOs"
+                    desc = "Getting UTXOs"
                 for ts, df in tqdm(
                     zip(
                         cache.time.values[:last_index],
@@ -424,20 +357,24 @@ def cache_utxos(
                     desc=desc,
                     unit="tx",
                 ):
-                    tx_utxos.append((ts, df))
+                    df["time"] = ts.as_py()
+                    tx_utxos.append(df)
         else:
             for ts, df in zip(
                 cache.time.values[:last_index],
                 executor.map(get_utxo, cache.tx_hash.values[:last_index]),
             ):
-                tx_utxos.append((ts, df))
+                num_calls += 1
+                df["time"] = ts.as_py()
+                df["time"] = df.time.astype("datetime64[s]")
+                tx_utxos.append(df)
 
         while len(tx_utxos) > 0:
             logger.debug(
                 "Caching transactions for "
-                + f"{tx_utxos[0][0].as_py().year}"
-                + f"{str(tx_utxos[0][0].as_py().month).zfill(2)}"
+                + f"{tx_utxos[0].time[0].year}"
+                + f"{str(tx_utxos[0].time[0].month).zfill(2)}"
             )
-            tx_utxos = _cache_utxos(tx_utxos, cache_path)
+            tx_utxos = _cache_timestamp_data(tx_utxos, cache_path)
 
     return num_calls

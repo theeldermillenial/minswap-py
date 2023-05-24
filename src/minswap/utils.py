@@ -5,11 +5,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
 import blockfrost
+import pandas
 import vaex
 from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    from minswap.models import PoolTransactionReference
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +27,12 @@ call_lock = Lock()
 
 
 class BlockfrostCallLimit(Exception):
-    pass
+    """Error when the Blockfrost call limit is reached."""
 
 
 class BlockfrostBackend:
+    """A class to enforce stall calls to Blockfrost when a rate limit is hit."""
+
     last_call: float = time.time()
     num_limit_calls: float = 0.0
     max_limit_calls: int = 500
@@ -37,10 +43,12 @@ class BlockfrostBackend:
 
     @classmethod
     def remaining_calls(cls) -> int:
+        """Remaining calls before rate limit."""
         return cls.max_total_calls - cls.total_calls
 
     @classmethod
     def reset_total_calls(cls) -> None:
+        """Reset the call count."""
         cls.total_calls = 0
 
     @classmethod
@@ -67,11 +75,19 @@ class BlockfrostBackend:
 
     @classmethod
     def api(cls):
+        """Blockfrost API with rate limits."""
         cls._limiter()
         return cls._api
 
     @classmethod
     def rate_limit(cls, func):
+        """Wrap with rate limit.
+
+        This can probably be removed. It might have utility in the future for
+        customizing imposing rate limits on a function.
+
+        """
+
         def wrapper(*args, **kwargs):
             cls._limiter()
             try:
@@ -147,3 +163,72 @@ def _get_cache(cache_path: Path) -> Optional[vaex.DataFrame]:
         df = None
 
     return df
+
+
+def _cache_timestamp_data(
+    data: Union[List[PoolTransactionReference], List[pandas.DataFrame]],
+    cache_path: Path,
+) -> Union[List[PoolTransactionReference], List[pandas.DataFrame]]:
+    """Cache a list of objects.
+
+    This is a utility function to cache a list of objects containing a timestamp. It
+    searches the list for a change in the timestamp month, caches data for the first
+    occurring month, and returns the rest.
+
+    Args:
+        data: A list of objects containing a time element.
+        cache_path: The path to where the data should be stored.
+
+    Raises:
+        TypeError: `data` must be one of [PoolTransactionReference, pandas.DataFrame]
+
+    Returns:
+        _description_
+    """
+    # Convert data to a vaex dataframe
+    if isinstance(data[0], PoolTransactionReference):
+        if data[0].time.month == data[-1].time.month:
+            index = len(data)
+        else:
+            for index in range(len(data) - 1):
+                if data[index].time.month != data[index + 1].time.month:
+                    index += 1
+                    break
+        df = pandas.DataFrame([d.dict() for d in data[:index]])
+    elif isinstance(data[0], pandas.DataFrame):
+        if data[0].time[0].month == data[-1].time[0].month:  # type: ignore
+            index = len(data)
+        else:
+            for index in range(len(data) - 1):
+                if data[index].time.month != data[index + 1].time.month:
+                    index += 1
+                    break
+        df = pandas.concat(data, ignore_index=True)
+    else:
+        raise TypeError(
+            "Transactions should be one of [pydantic.BaseModel, pandas.DataFrame]"
+        )
+
+    df["time"] = df.time.astype("datetime64[s]")
+
+    # Define the output path
+    cache_name = f"{df.time[0].year}" + f"{str(df.time[0].month).zfill(2)}.arrow"
+    path = cache_path.joinpath(cache_name)
+
+    # If the cache exists, append to it
+    if path.exists():
+        cache_df = pandas.read_feather(path)
+        tmp_path = path.with_name(path.name.replace(".arrow", "_temp.arrow"))
+        threshold = cache_df.time.astype("datetime64[s]").values[-1]
+        filtered = df[df.time > threshold]
+        logger.info(len(filtered))
+        if len(filtered) > 0:
+            pandas.concat([cache_df, filtered], ignore_index=True).to_feather(tmp_path)
+            path.unlink()
+            tmp_path.rename(path)
+
+    # Otherwise, just dump the whole dataframe to cache
+    else:
+        df.to_feather(path)
+
+    return data[index:]

@@ -1,6 +1,6 @@
 # mypy: ignore-errors
-
 import numpy as np
+from pydantic import ValidationError
 from tqdm import tqdm
 
 import minswap.transactions as transactions
@@ -19,7 +19,10 @@ pools = get_pools()
 assert isinstance(pools, list)
 
 for pool in tqdm(pools, total=len(pools)):
-    calls = transactions.cache_utxos(pool, progress=True)
+    try:
+        calls = transactions.cache_utxos(pool, progress=True)
+    except ValidationError:
+        continue
 
     cache = transactions.get_utxo_cache(pool.id)
 
@@ -32,3 +35,7 @@ for pool in tqdm(pools, total=len(pools)):
         )
         < 0
     ).any()
+
+    total_calls += calls
+
+print(f"Finished! Made {total_calls} API calls total.")
