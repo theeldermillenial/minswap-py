@@ -11,6 +11,21 @@
 
 Documentation and additional features coming soon.
 
+## Have a question?
+
+Reach out to me on the Minswap discord. You can usually find me on`#technical`, and I'm happy to respond to questions there.
+
+https://discord.com/channels/829060079248343090/845208119729979402
+
+## Support
+
+If you find this project useful, please consider supporting the project by buying me a
+beer in the form of ADA or MIN:
+
+```bash
+addr1q9hw8fuex09vr3rqwtn4fzh9qxjlzjzh8aww684ln0rv0cfu3f0de6qkmh7c7yysfz808978wwe6ll30wu8l3cgvgdjqa7egnl
+```
+
 ## Changelog
 
 Added CHANGELOG.md :)
