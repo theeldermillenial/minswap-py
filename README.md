@@ -11,6 +11,11 @@
 
 Documentation and additional features coming soon.
 
+This tool was recently used to help generate data for the Minswap DAO Emissions and
+Treasury report. You can read the report here:
+
+https://minswap.org/storage/2023/06/31-3-2023_Emissions_and_Treasury_Report.pdf
+
 ## Have a question?
 
 Reach out to me on the Minswap discord. You can usually find me on`#technical`, and I'm happy to respond to questions there.
