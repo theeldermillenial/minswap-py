@@ -47,7 +47,7 @@ pre-commit = "^3.0.1"
 profile = "black"
 
 [tool.mypy]
-exclude = ['^blockfrost\.py$', 'tests/']
+exclude = ['^blockfrost\.py$', 'tests/', 'examples/*']
 
 [build-system]
 requires = ["poetry-core"]

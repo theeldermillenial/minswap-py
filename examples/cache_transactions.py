@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """Build a transaction cache.
 
 The goal of this script is to build a transaction cache. Use this with caution.
@@ -37,24 +38,12 @@ total_calls = 0
 pools = get_pools()
 assert isinstance(pools, list)
 
-# Iterate over the pools and cache transations
-# for pool in pools:
-#     if total_calls >= max_calls:
-#         print("Reached maximum requests. Exiting script.")
-#         break
-
-#     print(
-#         "Getting transaction for pool: "
-#         + f"{asset_ticker(pool.unit_a)}-{asset_ticker(pool.unit_b)}"
-#     )
-#     calls = cache_transactions(pool.id, max_calls - total_calls)
-
 total_calls = 0
 with ThreadPoolExecutor() as executor:
-    threads = executor.map(cache_transactions, [pool.id for pool in pools])
+    threads = executor.map(cache_transactions, [pool.id for pool in pools[2500:]])
 
     with logging_redirect_tqdm():
-        for thread in tqdm(threads, total=len(pools)):
+        for thread in tqdm(threads, total=len(pools), initial=2500):
             total_calls += thread
 
 print(f"Finished! Made {total_calls} API calls total.")

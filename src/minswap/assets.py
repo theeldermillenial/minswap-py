@@ -7,23 +7,17 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Dict, List, MutableSet, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, MutableSet, Optional, Union
 
-import blockfrost
 import numpy
 import pandas
 import vaex
-from dotenv import dotenv_values
-from pyarrow import TimestampScalar
 
-from minswap.models import (
-    AssetHistoryReference,
-    AssetIdentity,
-    Assets,
-    PoolTransactionReference,
-    Transaction,
-)
-from minswap.utils import save_timestamp
+import minswap.transactions
+import minswap.utils
+
+if TYPE_CHECKING:
+    import minswap.utils._cache_utxos
 
 ASSET_CACHE_PATH = Path(__file__).parent.joinpath("data/assets")
 ASSET_CACHE_PATH.mkdir(exist_ok=True, parents=True)
@@ -59,13 +53,9 @@ def get_asset_history_cache(asset_id: str) -> Optional[vaex.DataFrame]:
     Returns:
         A memory mapped vaex dataframe.
     """
-    cache_path = ASSET_INFO_CACHE_PATH.joinpath(asset_id)
-    try:
-        df = vaex.open(cache_path.joinpath("history.arrow"))
-    except OSError:
-        df = None
-
-    return df
+    return minswap.utils._get_cache(
+        cache_path=ASSET_INFO_CACHE_PATH.joinpath(asset_id), glob="history.arrow"
+    )
 
 
 def get_asset_history_transaction_cache(asset_id: str) -> Optional[vaex.DataFrame]:
@@ -83,13 +73,7 @@ def get_asset_history_transaction_cache(asset_id: str) -> Optional[vaex.DataFram
     Returns:
         A memory mapped vaex dataframe.
     """
-    cache_path = ASSET_INFO_CACHE_PATH.joinpath(asset_id)
-    try:
-        df = vaex.open(cache_path.joinpath("[0-9][0-9][0-9][0-9][0-9][0-9].arrow"))
-    except OSError:
-        df = None
-
-    return df
+    return minswap.utils._get_cache(cache_path=ASSET_INFO_CACHE_PATH.joinpath(asset_id))
 
 
 def get_asset_transaction_cache(asset_id: str) -> Optional[vaex.DataFrame]:
@@ -107,58 +91,16 @@ def get_asset_transaction_cache(asset_id: str) -> Optional[vaex.DataFrame]:
     Returns:
         A memory mapped vaex dataframe.
     """
-    cache_path = ASSET_TRANSACTION_CACHE_PATH.joinpath(asset_id)
-    try:
-        df = vaex.open(cache_path.joinpath("[0-9][0-9][0-9][0-9][0-9][0-9].arrow"))
-    except OSError:
-        df = None
-
-    return df
-
-
-def _cache_transactions(
-    transactions: List[PoolTransactionReference], cache_path: Path
-) -> List[PoolTransactionReference]:
-    if transactions[0].time.month == transactions[-1].time.month:
-        index = len(transactions)
-    else:
-        for index in range(len(transactions) - 1):
-            if transactions[index].time.month != transactions[index + 1].time.month:
-                index += 1
-                break
-
-    # Convert data to a vaex dataframe
-    df = pandas.DataFrame([d.dict() for d in transactions[:index]])
-    df["time"] = df.time.astype("datetime64[s]")
-
-    # Define the output path
-    cache_name = (
-        f"{transactions[0].time.year}"
-        + f"{str(transactions[0].time.month).zfill(2)}.arrow"
+    return minswap.utils._get_cache(
+        cache_path=ASSET_TRANSACTION_CACHE_PATH.joinpath(asset_id)
     )
-    path = cache_path.joinpath(cache_name)
-
-    # If the cache exists, append to it
-    if path.exists():
-        cache_df = pandas.read_feather(path)
-        tmp_path = path.with_name(path.name.replace(".arrow", "_temp.arrow"))
-        threshold = cache_df.time.astype("datetime64[s]").values[-1]
-        filtered = df[df.time > threshold]
-        if len(filtered) > 0:
-            pandas.concat([cache_df, filtered], ignore_index=True).to_feather(tmp_path)
-            path.unlink()
-            tmp_path.rename(path)
-
-    # Otherwise, just dump the whole dataframe to cache
-    else:
-        df.to_feather(path)
-
-    return transactions[index:]
 
 
 def _cache_txs(
-    transactions: List[Transaction], cache_path: Path, use_hash: bool = False
-) -> List[Transaction]:
+    transactions: List[minswap.models.Transaction],
+    cache_path: Path,
+    use_hash: bool = False,
+) -> List[minswap.models.Transaction]:
     if transactions[0].block_time.month == transactions[-1].block_time.month:
         index = len(transactions)
     else:
@@ -198,6 +140,8 @@ def _cache_txs(
                     tmp_df.drop("level_0", axis=1, inplace=True)
                 except KeyError:
                     pass
+                print(tmp_df.head())
+                raise Exception
                 tmp_df = tmp_df.reset_index()
                 tmp_df.drop("level_0", axis=1, inplace=True)
                 tmp_df.to_feather(tmp_path)
@@ -235,17 +179,11 @@ def get_utxo_cache(asset_id: str) -> Optional[vaex.DataFrame]:
     Returns:
         A memory mapped vaex dataframe.
     """
-    cache_path = ASSET_UTXO_CACHE_PATH.joinpath(asset_id)
-    try:
-        df = vaex.open(cache_path.joinpath("[0-9][0-9][0-9][0-9][0-9][0-9].arrow"))
-    except OSError:
-        df = None
-
-    return df
+    return minswap.utils._get_cache(cache_path=ASSET_UTXO_CACHE_PATH.joinpath(asset_id))
 
 
-@save_timestamp(ASSET_INFO_CACHE_PATH, 0, "asset")
-def update_asset_info(asset: str) -> Optional[AssetIdentity]:
+@minswap.utils.save_timestamp(ASSET_INFO_CACHE_PATH, 0, "asset")
+def update_asset_info(asset: str) -> Optional[minswap.models.AssetIdentity]:
     """Get the latest asset information from the Cardano chain.
 
     Args:
@@ -256,11 +194,9 @@ def update_asset_info(asset: str) -> Optional[AssetIdentity]:
     """
     asset_path = ASSET_INFO_CACHE_PATH.joinpath(asset)
 
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-    info = api.asset(asset, return_type="json")
+    info = minswap.utils.BlockfrostBackend.api().asset(asset, return_type="json")
 
-    asset_id = AssetIdentity.parse_obj(info)
+    asset_id = minswap.models.AssetIdentity.parse_obj(info)
 
     with open(asset_path.joinpath("asset.json"), "w") as fw:
         json.dump(asset_id.dict(), fw, indent=2)
@@ -268,7 +204,9 @@ def update_asset_info(asset: str) -> Optional[AssetIdentity]:
     return asset_id
 
 
-def get_asset_info(asset: str, update_cache=False) -> Optional[AssetIdentity]:
+def get_asset_info(
+    asset: str, update_cache=False
+) -> Optional[minswap.models.AssetIdentity]:
     """Get the asset information.
 
     Return the asset information. This will use cached information if available, and
@@ -287,10 +225,10 @@ def get_asset_info(asset: str, update_cache=False) -> Optional[AssetIdentity]:
     if update_cache or not asset_path.exists():
         return update_asset_info(asset)
     else:
-        return AssetIdentity.parse_file(asset_path)
+        return minswap.models.AssetIdentity.parse_file(asset_path)
 
 
-def update_assets(assets: Union[MutableSet[str], Assets]) -> None:
+def update_assets(assets: Union[MutableSet[str], minswap.models.Assets]) -> None:
     """Update asset information cache.
 
     Args:
@@ -323,7 +261,7 @@ def asset_decimals(unit: str) -> int:
         return decimals
 
 
-def naturalize_assets(assets: Assets) -> Dict[str, Decimal]:
+def naturalize_assets(assets: minswap.models.Assets) -> Dict[str, Decimal]:
     """Get the number of decimals associated with an asset.
 
     This returns a `Decimal` with the proper precision context.
@@ -375,6 +313,7 @@ def asset_ticker(unit: str) -> str:
             asset_name = info.onchain_metadata.symbol
             logger.debug(f"Found symbol for {asset_name}")
         else:
+            assert isinstance(info.asset_name, str)
             try:
                 asset_name = bytes.fromhex(info.asset_name).decode()
                 logger.debug(
@@ -396,7 +335,7 @@ def get_asset_history(
     page: int = 1,
     count: int = 100,
     order: str = "desc",
-) -> List[AssetHistoryReference]:
+) -> List[minswap.models.AssetHistoryReference]:
     """Get a list of pool history transactions.
 
     This returns only a list of `PoolHistory` items, each providing enough information
@@ -411,14 +350,13 @@ def get_asset_history(
     Returns:
         A list of `PoolHistory` items.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    asset_txs = api.asset_history(
+    asset_txs = minswap.utils.BlockfrostBackend.api().asset_history(
         asset_id, count=count, page=page, order=order, return_type="json"
     )
 
-    asset_snapshots = [AssetHistoryReference.parse_obj(tx) for tx in asset_txs]
+    asset_snapshots = [
+        minswap.models.AssetHistoryReference.parse_obj(tx) for tx in asset_txs
+    ]
 
     return asset_snapshots
 
@@ -428,7 +366,7 @@ def get_asset_transactions(
     page: int = 1,
     count: int = 100,
     order: str = "desc",
-) -> List[PoolTransactionReference]:
+) -> List[minswap.models.PoolTransactionReference]:
     """Get a list of pool history transactions.
 
     This returns only a list of `PoolHistory` items, each providing enough information
@@ -443,21 +381,20 @@ def get_asset_transactions(
     Returns:
         A list of `PoolHistory` items.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    asset_txs = api.asset_transactions(
+    asset_txs = minswap.utils.BlockfrostBackend.api().asset_transactions(
         asset_id, count=count, page=page, order=order, return_type="json"
     )
 
-    asset_snapshots = [PoolTransactionReference.parse_obj(tx) for tx in asset_txs]
+    asset_snapshots = [
+        minswap.models.PoolTransactionReference.parse_obj(tx) for tx in asset_txs
+    ]
 
     return asset_snapshots
 
 
 def get_asset_history_transactions(
     tx_hash: str,
-) -> Transaction:
+) -> minswap.models.Transaction:
     """Get a list of pool history transactions.
 
     This returns only a list of `PoolHistory` items, each providing enough information
@@ -472,99 +409,19 @@ def get_asset_history_transactions(
     Returns:
         A list of `PoolHistory` items.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    tx = Transaction.parse_obj(api.transaction(hash=tx_hash, return_type="json"))
+    tx = minswap.models.Transaction.parse_obj(
+        minswap.utils.BlockfrostBackend.api().transaction(
+            hash=tx_hash, return_type="json"
+        )
+    )
 
     return tx
 
 
-def get_utxo(
-    tx_hash: str,
-) -> pandas.DataFrame:
-    """Get a list of pool history transactions.
-
-    This returns a pandas dataframe containing all inputs and UTXOs for a particular
-    transaction.
-
-    Args:
-        pool_id: The unique pool id.
-        page: The index of paginated results to return. Defaults to 1.
-        count: The total number of results to return. Defaults to 100.
-        order: Must be "asc" or "desc". Defaults to "desc".
-
-    Returns:
-        A list of `PoolHistory` items.
-    """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    tx = api.transaction_utxos(tx_hash, return_type="json")
-
-    df = (
-        pandas.concat(
-            [pandas.DataFrame(tx["inputs"]), pandas.DataFrame(tx["outputs"])],
-            keys=["input", "output"],
-        )
-        .reset_index(level=0)
-        .reset_index(drop=True)
-    )
-
-    df.rename(columns={"level_0": "side"}, inplace=True)
-    df["hash"] = tx["hash"]
-
-    return df
-
-
-def _cache_utxos(
-    utxos: List[Tuple[TimestampScalar, pandas.DataFrame]], cache_path: Path
-) -> List[Tuple[TimestampScalar, pandas.DataFrame]]:
-    if utxos[0][0].as_py().month == utxos[-1][0].as_py().month:
-        index = len(utxos)
-    else:
-        for index in range(len(utxos) - 1):
-            if utxos[index][0].as_py().month != utxos[index + 1][0].as_py().month:
-                index += 1
-                break
-
-    # Add time to all dataframes
-    dfs = []
-    for t, df in utxos[:index]:
-        df["time"] = t.as_py()
-        df["time"] = df.time.astype("datetime64[s]")
-        dfs.append(df)
-
-    # Concatenate all dataframes
-    df = pandas.concat(dfs, ignore_index=True)
-
-    # Define the output path
-    cache_name = (
-        f"{utxos[0][0].as_py().year}"
-        + f"{str(utxos[0][0].as_py().month).zfill(2)}.arrow"
-    )
-    path = cache_path.joinpath(cache_name)
-
-    # If the cache exists, append to it
-    if path.exists():
-        cache_df = pandas.read_feather(path)
-        tmp_path = path.with_name(path.name.replace(".arrow", "_temp.arrow"))
-        threshold = cache_df.time.astype("datetime64[s]").values[-1]
-        filtered = df[df.time > threshold]
-        if len(filtered) > 0:
-            pandas.concat([cache_df, filtered], ignore_index=True).to_feather(tmp_path)
-            path.unlink()
-            tmp_path.rename(path)
-
-    # Otherwise, just dump the whole dataframe to cache
-    else:
-        df.to_feather(path)
-
-    return utxos[index:]
-
-
-@save_timestamp(ASSET_INFO_CACHE_PATH, 0, "asset_id")
-def cache_history(asset_id: str, max_calls: int = 1000) -> int:
+@minswap.utils.save_timestamp(ASSET_INFO_CACHE_PATH, 0, "asset_id")
+def cache_history(
+    asset_id: str, max_calls: int = minswap.utils.BlockfrostBackend.remaining_calls()
+) -> int:
     """Cache transactions for an asset.
 
     This function will build up a local cache of transactions for a specific asset. The
@@ -589,9 +446,6 @@ def cache_history(asset_id: str, max_calls: int = 1000) -> int:
     """
     cache_path = ASSET_INFO_CACHE_PATH.joinpath(asset_id)
 
-    # blockfrost allows 10 calls/sec, with 500 call bursts with a 10 call/sec cooloff
-    calls_allowed = 500
-
     # Load existing cache
     cache = get_asset_history_cache(asset_id=asset_id)
 
@@ -606,91 +460,66 @@ def cache_history(asset_id: str, max_calls: int = 1000) -> int:
 
     logger.debug(f"start page: {page}")
 
-    def get_history_batch(page: int) -> List[AssetHistoryReference]:
+    def get_history_batch(page: int) -> List[minswap.models.AssetHistoryReference]:
         transactions = get_asset_history(
             asset_id=asset_id, page=page, count=100, order="asc"
         )
 
         return transactions
 
-    with ThreadPoolExecutor(1) as executor:
-        # with ThreadPoolExecutor(call_batch) as executor:
-        done = False
-        num_calls = 0
-        transactions: List[AssetHistoryReference] = []
-        call_start = None
-        call_end = None
-        while not done and num_calls < max_calls:
-            if num_calls + call_batch > max_calls:
-                call_batch = max_calls - num_calls
-            num_calls += call_batch
-            logger.debug(f"Calling page range: {page}-{page+call_batch}")
+    done = False
+    num_calls = 0
+    transactions: List[minswap.models.AssetHistoryReference] = []
+    while not done and num_calls < max_calls:
+        if num_calls + call_batch > max_calls:
+            call_batch = max_calls - num_calls
+        num_calls += call_batch
+        logger.debug(f"Calling page range: {page}-{page+call_batch}")
 
-            # Rate limit the calling
-            call_end = datetime.now()
-            calls_allowed = calls_allowed - call_batch
-            if call_start is not None:
-                call_diff = call_end - call_start
+        # Make the calls
+        batch = get_history_batch(page)
+        if len(batch) != 100:
+            done = True
 
-                # Cooloff is 10 requests per second
-                calls_allowed += call_diff.total_seconds() * 10
+            if len(batch) == 0:
+                break
 
-                if calls_allowed < 0:
-                    delay_time = 5 * call_batch / 10
-                    logger.warning(
-                        "Nearing rate limit, waiting "
-                        + f"{delay_time:0.2f} seconds to resume."
-                    )
-                    time.sleep(delay_time)
-                    calls_allowed += (datetime.now() - call_end).total_seconds() * 10
+        transactions.extend(batch)
 
-            call_start = datetime.now()
+        page += call_batch
 
-            # Make the calls
-            threads = executor.map(get_history_batch, range(page, page + call_batch))
-            for thread in threads:
-                if len(thread) != 100:
-                    done = True
+    if len(transactions) > 0:
+        logger.debug("Caching transactions.")
 
-                    if len(thread) == 0:
-                        break
+        # Convert data to a vaex dataframe
+        df = pandas.DataFrame([d.dict() for d in transactions])
 
-                transactions.extend(thread)
+        # Define the output path
+        cache_name = "history.arrow"
+        path = cache_path.joinpath(cache_name)
 
-            page += call_batch
+        # If the cache exists, append to it
+        if path.exists():
+            cache_df = pandas.read_feather(path)
+            tmp_path = path.with_name(path.name.replace(".arrow", "_temp.arrow"))
+            threshold = len(cache) % 100
+            filtered = df.iloc[threshold:]
+            cache.close()
+            if len(filtered) > 0:
+                pandas.concat([cache_df, filtered], ignore_index=True).to_feather(
+                    tmp_path
+                )
+                path.unlink()
+                tmp_path.rename(path)
 
-        if len(transactions) > 0:
-            logger.debug("Caching transactions.")
-
-            # Convert data to a vaex dataframe
-            df = pandas.DataFrame([d.dict() for d in transactions])
-
-            # Define the output path
-            cache_name = "history.arrow"
-            path = cache_path.joinpath(cache_name)
-
-            # If the cache exists, append to it
-            if path.exists():
-                cache_df = pandas.read_feather(path)
-                tmp_path = path.with_name(path.name.replace(".arrow", "_temp.arrow"))
-                threshold = len(cache) % 100
-                filtered = df.iloc[threshold:]
-                cache.close()
-                if len(filtered) > 0:
-                    pandas.concat([cache_df, filtered], ignore_index=True).to_feather(
-                        tmp_path
-                    )
-                    path.unlink()
-                    tmp_path.rename(path)
-
-            # Otherwise, just dump the whole dataframe to cache
-            else:
-                df.to_feather(path)
+        # Otherwise, just dump the whole dataframe to cache
+        else:
+            df.to_feather(path)
 
     return num_calls
 
 
-@save_timestamp(ASSET_TRANSACTION_CACHE_PATH, 0, "asset_id")
+@minswap.utils.save_timestamp(ASSET_TRANSACTION_CACHE_PATH, 0, "asset_id")
 def cache_transactions(asset_id: str, max_calls: int = 1000) -> int:
     """Cache transactions for an asset.
 
@@ -716,9 +545,6 @@ def cache_transactions(asset_id: str, max_calls: int = 1000) -> int:
     """
     cache_path = ASSET_TRANSACTION_CACHE_PATH.joinpath(asset_id)
     now = datetime.utcnow()
-
-    # blockfrost allows 10 calls/sec, with 500 call bursts with a 10 call/sec cooloff
-    calls_allowed = 500
 
     # Load existing cache
     cache = get_asset_transaction_cache(asset_id=asset_id)
@@ -765,7 +591,9 @@ def cache_transactions(asset_id: str, max_calls: int = 1000) -> int:
 
     logger.debug(f"start page: {page}")
 
-    def get_transaction_batch(page: int) -> List[PoolTransactionReference]:
+    def get_transaction_batch(
+        page: int,
+    ) -> List[minswap.models.PoolTransactionReference]:
         transactions = get_asset_transactions(
             asset_id=asset_id, page=page, count=100, order="asc"
         )
@@ -776,34 +604,14 @@ def cache_transactions(asset_id: str, max_calls: int = 1000) -> int:
         # with ThreadPoolExecutor(call_batch) as executor:
         done = False
         num_calls = 0
-        transactions: List[PoolTransactionReference] = []
-        call_start = None
-        call_end = None
+        transactions: List[minswap.models.PoolTransactionReference] = []
         while not done and num_calls < max_calls:
+            # Exit if max_calls is reached
             if num_calls + call_batch > max_calls:
                 call_batch = max_calls - num_calls
+
             num_calls += call_batch
             logger.debug(f"Calling page range: {page}-{page+call_batch}")
-
-            # Rate limit the calling
-            call_end = datetime.now()
-            calls_allowed = calls_allowed - call_batch
-            if call_start is not None:
-                call_diff = call_end - call_start
-
-                # Cooloff is 10 requests per second
-                calls_allowed += call_diff.total_seconds() * 10
-
-                if calls_allowed < 0:
-                    delay_time = 5 * call_batch / 10
-                    logger.warning(
-                        "Nearing rate limit, waiting "
-                        + f"{delay_time:0.2f} seconds to resume."
-                    )
-                    time.sleep(delay_time)
-                    calls_allowed += (datetime.now() - call_end).total_seconds() * 10
-
-            call_start = datetime.now()
 
             # Make the calls
             threads = executor.map(
@@ -821,28 +629,31 @@ def cache_transactions(asset_id: str, max_calls: int = 1000) -> int:
             # Store the data if all data for a month is collected
             while (
                 len(transactions) > 0
-                and transactions[0].time.month != transactions[-1].time.month
+                and transactions[0].block_time.month
+                != transactions[-1].block_time.month
             ):
                 logger.debug(
                     "Caching transactions for "
-                    + f"{transactions[0].time.year}"
-                    + f"{str(transactions[0].time.month).zfill(2)}"
+                    + f"{transactions[0].block_time.year}"
+                    + f"{str(transactions[0].block_time.month).zfill(2)}"
                 )
-                transactions = _cache_transactions(transactions, cache_path)
+                transactions = minswap.utils._cache_timestamp_data(
+                    transactions, cache_path
+                )
             page += call_batch
 
         if len(transactions) > 0:
             logger.debug(
                 "Caching transactions for "
-                + f"{transactions[0].time.year}"
-                + f"{str(transactions[0].time.month).zfill(2)}"
+                + f"{transactions[0].block_time.year}"
+                + f"{str(transactions[0].block_time.month).zfill(2)}"
             )
-            _cache_transactions(transactions, cache_path)
+            minswap.utils._cache_timestamp_data(transactions, cache_path)
 
     return num_calls
 
 
-@save_timestamp(ASSET_UTXO_CACHE_PATH, 0, "asset_id")
+@minswap.utils.save_timestamp(ASSET_UTXO_CACHE_PATH, 0, "asset_id")
 def cache_utxos(asset_id: str, max_calls: int = 1000) -> int:
     """Cache transaction utxos for a pool.
 
@@ -926,7 +737,9 @@ def cache_utxos(asset_id: str, max_calls: int = 1000) -> int:
                 list(
                     zip(
                         cache.time[bs:be].values,
-                        executor.map(get_utxo, cache.tx_hash[bs:be].values),
+                        executor.map(
+                            minswap.utils.get_utxo, cache.tx_hash[bs:be].values
+                        ),
                     )
                 )
             )
@@ -940,7 +753,7 @@ def cache_utxos(asset_id: str, max_calls: int = 1000) -> int:
                     + f"{tx_utxos[0][0].as_py().year}"
                     + f"{str(tx_utxos[0][0].as_py().month).zfill(2)}"
                 )
-                tx_utxos = _cache_utxos(tx_utxos, cache_path)
+                tx_utxos = minswap.utils._cache_utxos(tx_utxos, cache_path)
 
         if len(tx_utxos) > 0:
             logger.debug(
@@ -948,12 +761,12 @@ def cache_utxos(asset_id: str, max_calls: int = 1000) -> int:
                 + f"{tx_utxos[0][0].as_py().year}"
                 + f"{str(tx_utxos[0][0].as_py().month).zfill(2)}"
             )
-            _cache_utxos(tx_utxos, cache_path)
+            minswap.utils._cache_utxos(tx_utxos, cache_path)
 
     return num_calls
 
 
-@save_timestamp(ASSET_INFO_CACHE_PATH, 0, "asset_id")
+@minswap.utils.save_timestamp(ASSET_INFO_CACHE_PATH, 0, "asset_id")
 def cache_history_transactions(asset_id: str, max_calls: int = 1000) -> int:
     """Cache transaction utxos for a pool.
 
@@ -1004,7 +817,7 @@ def cache_history_transactions(asset_id: str, max_calls: int = 1000) -> int:
 
     with ThreadPoolExecutor() as executor:
         num_calls = 0
-        txs: List[Transaction] = []
+        txs: List[minswap.models.Transaction] = []
         call_start = None
         call_end = None
 
@@ -1049,55 +862,3 @@ def cache_history_transactions(asset_id: str, max_calls: int = 1000) -> int:
                 txs = _cache_txs(txs, cache_path, use_hash=True)
 
     return num_calls
-
-
-def circulating_asset(
-    asset: str = "29d222ce763455e3d7a09a665ce554f00ac89d2e99a1a83d267170c64d494e",
-) -> Tuple[Assets, Assets]:
-    """Calculate the amount of an asset in circulation.
-
-    This identifies all addresses original minting transactions were sent to. Then
-    the number of coins remaining in these minting addresses is subtracted from the
-    total number of coins minted.
-
-    Note:
-        There is a discrepancy between the amount of circulating MIN calculated by this
-        function and what is displayed on Minswap.org. This is mostly likely due to
-        the token vesting schedule, and not accounting for the unlocking schedule.
-
-    Returns:
-        The first output is the amount of circulating asset, the second output is the
-            total minted asset.
-    """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    asset_updates = api.asset_history(asset, return_type="json")
-
-    addresses = set()
-    minted = 0
-    for h in asset_updates:
-        utxos = api.transaction_utxos(h["tx_hash"], return_type="json")
-
-        for out_utxo in utxos["outputs"]:
-            for token in out_utxo["amount"]:
-                if token["unit"] == asset:
-                    if h["action"] == "minted":
-                        minted += int(token["quantity"])
-                    else:
-                        minted -= int(token["quantity"])
-                    addresses.add(out_utxo["address"])
-                    break
-
-    circulating = 0
-    for address in addresses:
-        amounts = api.address(address, return_type="json")["amount"]
-
-        for amount in amounts:
-            if amount["unit"] == asset:
-                circulating += int(amount["quantity"])
-
-    total_asset = Assets(**{asset: minted})
-    circ_asset = Assets(**{asset: circulating})
-
-    return circ_asset, total_asset

@@ -14,18 +14,14 @@ import vaex
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from minswap import addr
-from minswap.assets import asset_ticker
-from minswap.models import PoolTransactionReference
-from minswap.utils import (
-    BlockfrostBackend,
-    _cache_timestamp_data,
-    _get_cache,
-    save_timestamp,
-)
+import minswap
+import minswap.addr
+import minswap.models
+import minswap.utils
 
 if TYPE_CHECKING:
-    from minswap.pools import PoolState
+    import minswap.assets.asset_ticker
+    import minswap.models.PoolState
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +32,9 @@ TRANSACTION_UTXO_CACHE_PATH = Path(__file__).parent.joinpath("data/utxos")
 TRANSACTION_UTXO_CACHE_PATH.mkdir(exist_ok=True, parents=True)
 
 
-def get_transaction_cache(pool: Union[PoolState, str]) -> Optional[vaex.DataFrame]:
+def get_transaction_cache(
+    pool: Union[minswap.models.PoolState, str]
+) -> Optional[vaex.DataFrame]:
     """Get a vaex dataframe of locally cached transaction data.
 
     This function returns a vaex dataframe containing transaction data for the
@@ -52,10 +50,12 @@ def get_transaction_cache(pool: Union[PoolState, str]) -> Optional[vaex.DataFram
         A memory mapped vaex dataframe.
     """
     pool_id = pool if isinstance(pool, str) else pool.id
-    return _get_cache(cache_path=TRANSACTION_CACHE_PATH.joinpath(pool_id))
+    return minswap.utils._get_cache(cache_path=TRANSACTION_CACHE_PATH.joinpath(pool_id))
 
 
-def get_utxo_cache(pool: Union[PoolState, str]) -> Optional[vaex.DataFrame]:
+def get_utxo_cache(
+    pool: Union[minswap.models.PoolState, str]
+) -> Optional[vaex.DataFrame]:
     """Get a vaex dataframe of locally cached transaction data.
 
     This function returns a vaex dataframe containing transaction data for the
@@ -71,15 +71,17 @@ def get_utxo_cache(pool: Union[PoolState, str]) -> Optional[vaex.DataFrame]:
         A memory mapped vaex dataframe.
     """
     pool_id = pool if isinstance(pool, str) else pool.id
-    return _get_cache(cache_path=TRANSACTION_UTXO_CACHE_PATH.joinpath(pool_id))
+    return minswap.utils._get_cache(
+        cache_path=TRANSACTION_UTXO_CACHE_PATH.joinpath(pool_id)
+    )
 
 
 def get_pool_transaction_history(
-    pool: Union[PoolState, str],
+    pool: Union[minswap.models.PoolState, str],
     page: int = 1,
     count: int = 100,
     order: str = "desc",
-) -> List[PoolTransactionReference]:
+) -> List[minswap.models.PoolTransactionReference]:
     """Get a list of pool history transactions.
 
     This returns only a list of `PoolHistory` items, each providing enough information
@@ -96,54 +98,22 @@ def get_pool_transaction_history(
     """
     pool_id = pool if isinstance(pool, str) else pool.id
 
-    nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
-    nft_txs = BlockfrostBackend.api().asset_transactions(
+    nft = f"{minswap.addr.POOL_NFT_POLICY_ID}{pool_id}"
+    nft_txs = minswap.utils.BlockfrostBackend.api().asset_transactions(
         nft, count=count, page=page, order=order, return_type="json"
     )
 
-    pool_snapshots = [PoolTransactionReference.parse_obj(tx) for tx in nft_txs]
+    pool_snapshots = [
+        minswap.models.PoolTransactionReference.parse_obj(tx) for tx in nft_txs
+    ]
 
     return pool_snapshots
 
 
-def get_utxo(
-    tx_hash: str,
-) -> pandas.DataFrame:
-    """Get a list of pool history transactions.
-
-    This returns a pandas dataframe containing all inputs and UTXOs for a particular
-    transaction.
-
-    Args:
-        pool_id: The unique pool id.
-        page: The index of paginated results to return. Defaults to 1.
-        count: The total number of results to return. Defaults to 100.
-        order: Must be "asc" or "desc". Defaults to "desc".
-
-    Returns:
-        A list of `PoolHistory` items.
-    """
-    tx = BlockfrostBackend.api().transaction_utxos(tx_hash, return_type="json")
-
-    # TODO: Need to create a pydantic model for this
-    df = (
-        pandas.concat(
-            [pandas.DataFrame(tx["inputs"]), pandas.DataFrame(tx["outputs"])],
-            keys=["input", "output"],
-        )
-        .reset_index(level=0)
-        .reset_index(drop=True)
-    )
-
-    df.rename(columns={"level_0": "side"}, inplace=True)
-    df["hash"] = tx["hash"]
-
-    return df
-
-
-@save_timestamp(TRANSACTION_CACHE_PATH, 0, "pool_id")
+@minswap.utils.save_timestamp(TRANSACTION_CACHE_PATH, 0, "pool_id")
 def cache_transactions(
-    pool: Union[str, PoolState], max_calls: int = BlockfrostBackend.remaining_calls()
+    pool: Union[str, minswap.models.PoolState],
+    max_calls: int = minswap.utils.BlockfrostBackend.remaining_calls(),
 ) -> int:
     """Cache transactions for a pool.
 
@@ -187,7 +157,7 @@ def cache_transactions(
 
         # Get a rough estimate of how many calls are needed to update the cache
         last_month = now - timedelta(days=30)
-        filtered = cache[cache.time > numpy.datetime64(last_month)]
+        filtered = cache[cache.block_time > numpy.datetime64(last_month)]
 
         # If no data from the previous month,
         if len(filtered) <= 1:
@@ -199,7 +169,8 @@ def cache_transactions(
         else:
             # Calculate the mean transaction rate
             time_period = (
-                filtered.time.values[-1].as_py() - filtered.time.values[0].as_py()
+                filtered.block_time.values[-1].as_py()
+                - filtered.block_time.values[0].as_py()
             ).total_seconds()
             n_transactions = len(filtered)
             if time_period is None or time_period == 0:
@@ -209,7 +180,7 @@ def cache_transactions(
 
                 # Estimate number of pages needed to update to the current time
                 time_delta = (
-                    datetime.utcnow() - filtered.time.values[-1].as_py()
+                    datetime.utcnow() - filtered.block_time.values[-1].as_py()
                 ).total_seconds()
                 call_batch = min(cpu_count(), int(time_delta * tps // 100))
 
@@ -225,7 +196,9 @@ def cache_transactions(
 
     logger.debug(f"start page: {page}")
 
-    def get_transaction_batch(page: int) -> List[PoolTransactionReference]:
+    def get_transaction_batch(
+        page: int,
+    ) -> List[minswap.models.PoolTransactionReference]:
         transactions = get_pool_transaction_history(
             pool=pool_id, page=page, count=100, order="asc"
         )
@@ -235,7 +208,7 @@ def cache_transactions(
     with ThreadPoolExecutor(call_batch) as executor:
         done = False
         num_calls = 0
-        transactions: List[PoolTransactionReference] = []
+        transactions: List[minswap.models.PoolTransactionReference] = []
         while not done and num_calls < max_calls:
             # Exit if max_calls is reached
             if num_calls + call_batch > max_calls:
@@ -260,31 +233,34 @@ def cache_transactions(
             # Store the data if all data for a month is collected
             while (
                 len(transactions) > 0
-                and transactions[0].time.month != transactions[-1].time.month
+                and transactions[0].block_time.month
+                != transactions[-1].block_time.month
             ):
                 logger.debug(
                     "Caching transactions for "
-                    + f"{transactions[0].time.year}"
-                    + f"{str(transactions[0].time.month).zfill(2)}"
+                    + f"{transactions[0].block_time.year}"
+                    + f"{str(transactions[0].block_time.month).zfill(2)}"
                 )
-                transactions = _cache_timestamp_data(transactions, cache_path)
+                transactions = minswap.utils._cache_timestamp_data(
+                    transactions, cache_path
+                )
             page += call_batch
 
         if len(transactions) > 0:
             logger.debug(
                 "Caching transactions for "
-                + f"{transactions[0].time.year}"
-                + f"{str(transactions[0].time.month).zfill(2)}"
+                + f"{transactions[0].block_time.year}"
+                + f"{str(transactions[0].block_time.month).zfill(2)}"
             )
-            _cache_timestamp_data(transactions, cache_path)
+            minswap.utils._cache_timestamp_data(transactions, cache_path)
 
     return num_calls
 
 
-@save_timestamp(TRANSACTION_UTXO_CACHE_PATH, 0, "pool_id")
+@minswap.utils.save_timestamp(TRANSACTION_UTXO_CACHE_PATH, 0, "pool_id")
 def cache_utxos(
-    pool: Union[PoolState, str],
-    max_calls: int = BlockfrostBackend.remaining_calls(),
+    pool: Union[minswap.models.PoolState, str],
+    max_calls: int = minswap.utils.BlockfrostBackend.remaining_calls(),
     progress: bool = False,
 ) -> int:
     """Cache transaction utxos for a pool.
@@ -322,7 +298,10 @@ def cache_utxos(
     utxo_cache = get_utxo_cache(pool=pool_id)
     if utxo_cache is not None:
         init_length = len(cache)
-        cache = cache[cache.time > numpy.datetime64(utxo_cache.time.values[-1].as_py())]
+        cache = cache[
+            cache.block_time
+            > numpy.datetime64(utxo_cache.block_time.values[-1].as_py())
+        ]
         logger.debug(f"Found {init_length-len(cache)} cached transactions.")
         utxo_cache.close()
 
@@ -342,39 +321,42 @@ def cache_utxos(
         if progress:
             with logging_redirect_tqdm():
                 if not isinstance(pool, str):
-                    ticker_a = asset_ticker(pool.unit_a)
-                    ticker_b = asset_ticker(pool.unit_b)
+                    ticker_a = minswap.assets.asset_ticker(pool.unit_a)
+                    ticker_b = minswap.assets.asset_ticker(pool.unit_b)
                     desc = f"{ticker_a}/{ticker_b}"
                 else:
                     desc = "Getting UTXOs"
                 for ts, df in tqdm(
                     zip(
-                        cache.time.values[:last_index],
-                        executor.map(get_utxo, cache.tx_hash.values[:last_index]),
+                        cache.block_time.values[:last_index],
+                        executor.map(
+                            minswap.utils.get_utxo,
+                            cache.tx_hash.values[:last_index],
+                        ),
                     ),
                     total=last_index,
                     leave=False,
                     desc=desc,
                     unit="tx",
                 ):
-                    df["time"] = ts.as_py()
+                    df["block_time"] = ts.as_py()
                     tx_utxos.append(df)
         else:
             for ts, df in zip(
-                cache.time.values[:last_index],
-                executor.map(get_utxo, cache.tx_hash.values[:last_index]),
+                cache.block_time.values[:last_index],
+                executor.map(minswap.utils.get_utxo, cache.tx_hash.values[:last_index]),
             ):
                 num_calls += 1
-                df["time"] = ts.as_py()
-                df["time"] = df.time.astype("datetime64[s]")
+                df["block_time"] = ts.as_py()
+                df["block_time"] = df.time.astype("datetime64[s]")
                 tx_utxos.append(df)
 
         while len(tx_utxos) > 0:
             logger.debug(
                 "Caching transactions for "
-                + f"{tx_utxos[0].time[0].year}"
-                + f"{str(tx_utxos[0].time[0].month).zfill(2)}"
+                + f"{tx_utxos[0].block_time[0].year}"
+                + f"{str(tx_utxos[0].block_time[0].month).zfill(2)}"
             )
-            tx_utxos = _cache_timestamp_data(tx_utxos, cache_path)
+            tx_utxos = minswap.utils._cache_timestamp_data(tx_utxos, cache_path)
 
     return num_calls

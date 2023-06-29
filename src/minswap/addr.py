@@ -23,22 +23,23 @@ import vaex
 from dotenv import dotenv_values
 from pyarrow import TimestampScalar
 
-from minswap import transactions
 from minswap.models import Address, PoolTransactionReference
-from minswap.utils import save_timestamp
+from minswap.utils import get_utxo, save_timestamp
 
 logger = logging.getLogger(__name__)
 
 POOL = Address(
     bech32="addr1z8snz7c4974vzdpxu65ruphl3zjdvtxw8strf2c2tmqnxz2j2c79gy9l76sdg0xwhd7r0c0kna0tycz4y5s6mlenh8pq0xmsha"  # noqa
 )
-ORDER = Address(bech32="addr1wxn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uwc0h43gt")
+ORDER = Address(
+    bech32="addr1zxn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uw6j2c79gy9l76sdg0xwhd7r0c0kna0tycz4y5s6mlenh8pq6s3z70"  # noqa
+)
 
 POOL_TEST = Address(
     bech32="addr_test1zrsnz7c4974vzdpxu65ruphl3zjdvtxw8strf2c2tmqnxzvrajt8r8wqtygrfduwgukk73m5gcnplmztc5tl5ngy0upqs8q93k"  # noqa
 )
 ORDER_TEST = Address(
-    bech32="addr_test1wzn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uwc5lpd8w"
+    bech32="addr_test1zzn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uwurajt8r8wqtygrfduwgukk73m5gcnplmztc5tl5ngy0upq932hcy"  # noqa
 )
 
 # Policies
@@ -468,9 +469,7 @@ def cache_pol_utxos(pol_addr: str, max_calls: int = 1000) -> int:
                 list(
                     zip(
                         cache.time[bs:be].values,
-                        executor.map(
-                            transactions.get_utxo, cache.tx_hash[bs:be].values
-                        ),
+                        executor.map(get_utxo, cache.tx_hash[bs:be].values),
                     )
                 )
             )

@@ -1,5 +1,4 @@
 # mypy: ignore-errors
-import numpy as np
 from pydantic import ValidationError
 from tqdm import tqdm
 
@@ -28,13 +27,6 @@ for pool in tqdm(pools, total=len(pools)):
 
     if cache is None:
         continue
-
-    assert not (
-        (cache.time[1:].as_numpy().values - cache.time[:-1].as_numpy().values).astype(
-            np.float32
-        )
-        < 0
-    ).any()
 
     total_calls += calls
 

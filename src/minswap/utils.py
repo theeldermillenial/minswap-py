@@ -5,15 +5,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import blockfrost
 import pandas
 import vaex
 from dotenv import load_dotenv
 
-if TYPE_CHECKING:
-    from minswap.models import PoolTransactionReference
+import minswap
 
 logger = logging.getLogger(__name__)
 
@@ -166,9 +165,18 @@ def _get_cache(cache_path: Path, glob: str = CACHE_GLOB) -> Optional[vaex.DataFr
 
 
 def _cache_timestamp_data(
-    data: Union[List[PoolTransactionReference], List[pandas.DataFrame]],
+    data: Union[
+        List[minswap.models.PoolTransactionReference],
+        List[minswap.models.Transaction],
+        List[pandas.DataFrame],
+    ],
     cache_path: Path,
-) -> Union[List[PoolTransactionReference], List[pandas.DataFrame]]:
+    hash_filter: bool = False,
+) -> Union[
+    List[minswap.models.PoolTransactionReference],
+    List[minswap.models.Transaction],
+    List[pandas.DataFrame],
+]:
     """Cache a list of objects.
 
     This is a utility function to cache a list of objects containing a timestamp. It
@@ -186,21 +194,26 @@ def _cache_timestamp_data(
         _description_
     """
     # Convert data to a vaex dataframe
-    if isinstance(data[0], PoolTransactionReference):
-        if data[0].time.month == data[-1].time.month:
+    if isinstance(
+        data[0], (minswap.models.PoolTransactionReference, minswap.models.Transaction)
+    ):
+        if data[0].block_time.month == data[-1].block_time.month:
             index = len(data)
         else:
             for index in range(len(data) - 1):
-                if data[index].time.month != data[index + 1].time.month:
+                if data[index].block_time.month != data[index + 1].block_time.month:
                     index += 1
                     break
         df = pandas.DataFrame([d.dict() for d in data[:index]])
     elif isinstance(data[0], pandas.DataFrame):
-        if data[0].time[0].month == data[-1].time[0].month:  # type: ignore
+        if data[0].block_time[0].month == data[-1].block_time[0].month:  # type: ignore
             index = len(data)
         else:
             for index in range(len(data) - 1):
-                if data[index].time.month != data[index + 1].time.month:
+                if (
+                    data[index].block_time[0].month  # type:ignore
+                    != data[index + 1].block_time[0].month  # type: ignore
+                ):
                     index += 1
                     break
         df = pandas.concat(data, ignore_index=True)
@@ -209,26 +222,75 @@ def _cache_timestamp_data(
             "Transactions should be one of [pydantic.BaseModel, pandas.DataFrame]"
         )
 
-    df["time"] = df.time.astype("datetime64[s]")
+    df["block_time"] = df.block_time.astype("datetime64[s]")
+    df.sort_values(by="block_time", inplace=True)
 
     # Define the output path
-    cache_name = f"{df.time[0].year}" + f"{str(df.time[0].month).zfill(2)}.arrow"
+    cache_name = (
+        f"{df.block_time[0].year}" + f"{str(df.block_time[0].month).zfill(2)}.arrow"
+    )
     path = cache_path.joinpath(cache_name)
 
     # If the cache exists, append to it
     if path.exists():
         cache_df = pandas.read_feather(path)
         tmp_path = path.with_name(path.name.replace(".arrow", "_temp.arrow"))
-        threshold = cache_df.time.astype("datetime64[s]").values[-1]
-        filtered = df[df.time > threshold]
+        if hash_filter:
+            unique_hashes = list(
+                set(df.hash.values.tolist()) - set(cache_df.hash.values.tolist())
+            )
+            filtered = df[df.hash.isin(unique_hashes)]
+        else:
+            threshold = cache_df.block_time.astype("datetime64[s]").values[-1]
+            filtered = df[df.block_time > threshold]
+
         logger.info(len(filtered))
         if len(filtered) > 0:
-            pandas.concat([cache_df, filtered], ignore_index=True).to_feather(tmp_path)
+            pandas.concat([cache_df, filtered], ignore_index=True).sort_values(
+                by="block_time"
+            ).reset_index(drop=True).to_feather(tmp_path)
             path.unlink()
             tmp_path.rename(path)
 
     # Otherwise, just dump the whole dataframe to cache
     else:
+        df.sort_values(by="block_time", inplace=True)
+        df.reset_index(drop=True, inplace=True)
         df.to_feather(path)
 
     return data[index:]
+
+
+def get_utxo(
+    tx_hash: str,
+) -> pandas.DataFrame:
+    """Get a list of pool history transactions.
+
+    This returns a pandas dataframe containing all inputs and UTXOs for a particular
+    transaction.
+
+    Args:
+        pool_id: The unique pool id.
+        page: The index of paginated results to return. Defaults to 1.
+        count: The total number of results to return. Defaults to 100.
+        order: Must be "asc" or "desc". Defaults to "desc".
+
+    Returns:
+        A list of `PoolHistory` items.
+    """
+    tx = BlockfrostBackend.api().transaction_utxos(tx_hash, return_type="json")
+
+    # TODO: Need to create a pydantic model for this
+    df = (
+        pandas.concat(
+            [pandas.DataFrame(tx["inputs"]), pandas.DataFrame(tx["outputs"])],
+            keys=["input", "output"],
+        )
+        .reset_index(level=0)
+        .reset_index(drop=True)
+    )
+
+    df.rename(columns={"level_0": "side"}, inplace=True)
+    df["hash"] = tx["hash"]
+
+    return df
