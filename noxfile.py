@@ -26,10 +26,10 @@ def build_blockfrost_classes(session):
     source = local.joinpath("src/models/data/blockfrost/openapi.yaml")
     source.parent.mkdir(exist_ok=True, parents=True)
     response = requests.get(url=url)
-    with open(source, "w") as fw:
-        fw.write(response.text)
+    with open(source, "wb") as fw:
+        fw.write(response.content)
 
-    destination = local.joinpath("src/minswap/models/data/blockfrost_models.py")
+    destination = local.joinpath("src/minswap/models/blockfrost_models.py")
     session.run(
         "datamodel-codegen",
         "--input",
@@ -42,6 +42,18 @@ def build_blockfrost_classes(session):
         "--use-field-description",
         "--collapse-root-models",
         "--field-constraints",
+        "--use-double-quotes",
         "--target-python-version",
-        "3.10",
+        "3.9",
     )
+
+
+@nox_poetry.session(python=["3.10"])
+def unit_tests(session):
+    """Run unit tests on all supported versions of Python"""
+    # Install dependencies
+    session.install("poetry")
+    session.run_always("poetry", "install", "--only-root")
+    session.install("pytest")
+
+    session.run("pytest")

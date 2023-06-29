@@ -1,11 +1,11 @@
-"""Functions for processing minswap pools."""
+"""Functions for processing minswap pools.
+
+This mostly reflects the pool functionality in the minswap-blockfrostadapter.
+"""
 import logging
-from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional, Tuple, Union
 
-import blockfrost
-from dotenv import dotenv_values
 from pydantic import BaseModel, root_validator
 
 from minswap import addr
@@ -18,14 +18,19 @@ from minswap.models import (
     AssetTransaction,
     Output,
     TxContentUtxo,
-    TxIn,
 )
+from minswap.utils import BlockfrostBackend
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)-8s - %(levelname)-8s - %(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
+class InvalidPool(ValueError):
+    """Error thrown when a pool UTXO cannot be validated.
+
+    This error is generally thrown when the address associated with a pool is invalid
+    or when a UTXO does not have a valid pool NFT.
+    """
 
 
 def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
@@ -43,7 +48,7 @@ def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
     if not correct_address:
         message = f"Invalid pool address. Expected {addr.POOL}"
         logger.debug(message)
-        raise ValueError(message)
+        raise InvalidPool(message)
 
     # Check to make sure the pool has 1 factory token
     for asset in utxo.amount:
@@ -57,7 +62,7 @@ def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
         logger.debug(message)
         logger.debug(f"asset.unit={asset.unit}")
         logger.debug(f"factory={addr.FACTORY_POLICY_ID}{addr.FACTORY_ASSET_NAME}")
-        raise ValueError(message)
+        raise InvalidPool(message)
 
 
 def is_valid_pool_output(utxo: AddressUtxoContentItem):
@@ -65,14 +70,15 @@ def is_valid_pool_output(utxo: AddressUtxoContentItem):
     try:
         check_valid_pool_output(utxo)
         return True
-    except ValueError:
+    except InvalidPool:
         return False
 
 
 class PoolState(BaseModel):
     """A particular pool state, either current or historical."""
 
-    tx_in: TxIn
+    tx_index: int
+    tx_hash: str
     assets: Assets
     pool_nft: Assets
     minswap_nft: Assets
@@ -80,10 +86,11 @@ class PoolState(BaseModel):
 
     class Config:  # noqa: D106
         allow_mutation = False
+        extra = "forbid"
 
     @root_validator(pre=True)
     def translate_address(cls, values):  # noqa: D102
-        assets: Assets = values["assets"]
+        assets = values["assets"]
 
         # Find the NFT that assigns the pool a unique id
         nfts = [asset for asset in assets if asset.startswith(addr.POOL_NFT_POLICY_ID)]
@@ -161,9 +168,7 @@ class PoolState(BaseModel):
         logger.debug(f"_get_asset_info: {value}")
         if value == "lovelace":
             return "lovelace"
-        env = dotenv_values()
-        api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-        info = api.asset(value, return_type="json")
+        info = BlockfrostBackend.api().asset(value, return_type="json")
         return bytes.fromhex(AssetIdentity.parse_obj(info).asset_name).decode()
 
     @property
@@ -276,24 +281,13 @@ class PoolState(BaseModel):
 
         # Estimate the price impact
         price_numerator: int = (
-            reserve_out * numerator * 887
+            reserve_out * numerator * 997
             - asset.quantity() * denominator * reserve_in * 1000
         )
         price_denominator: int = reserve_out * numerator * 1000
         price_impact: float = price_numerator / price_denominator
 
         return amount_in, price_impact
-
-
-class PoolHistory(BaseModel):
-    """A reference to a pool transaction state."""
-
-    tx_in: TxIn
-    block_height: int
-    time: datetime
-
-    class Config:  # noqa: D106
-        allow_mutation = False
 
 
 def get_pools(
@@ -306,12 +300,9 @@ def get_pools(
             output. Default is False.
 
     Returns:
-        A list of pools, and a list of non-pool UTxOs
+        A list of pools, and a list of non-pool UTxOs (if specified)
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    utxos_raw = api.address_utxos(
+    utxos_raw = BlockfrostBackend.api().address_utxos(
         addr.POOL.address.encode(), gather_pages=True, order="asc", return_type="json"
     )
 
@@ -324,7 +315,8 @@ def get_pools(
         if is_valid_pool_output(utxo):
             pools.append(
                 PoolState(
-                    tx_in=TxIn(tx_hash=utxo.tx_hash, tx_index=utxo.output_index),
+                    tx_hash=utxo.tx_hash,
+                    tx_index=utxo.output_index,
                     assets=Assets(values=utxo.amount),
                     datum_hash=utxo.data_hash,
                 )
@@ -349,10 +341,7 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
     Returns:
         A `PoolState` if a pool is token is found, and `None` otherwise.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    pool_tx = api.transaction_utxos(tx_hash, return_type="json")
+    pool_tx = BlockfrostBackend.api().transaction_utxos(tx_hash, return_type="json")
     pool_utxo = None
     for utxo in TxContentUtxo.parse_obj(pool_tx).outputs:
         if utxo.address == addr.POOL.bech32:
@@ -365,7 +354,8 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
     check_valid_pool_output(pool_utxo)
 
     out_state = PoolState(
-        tx_in=TxIn(tx_hash=tx_hash, tx_index=utxo.output_index),
+        tx_hash=tx_hash,
+        tx_index=utxo.output_index,
         assets=Assets(values=utxo.amount),
         datum_hash=utxo.data_hash,
     )
@@ -382,11 +372,8 @@ def get_pool_by_id(pool_id: str) -> Optional[PoolState]:
     Returns:
         A `PoolState` if the pool can be found, and `None` otherwise.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
     nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
-    nft_txs = api.asset_transactions(
+    nft_txs = BlockfrostBackend.api().asset_transactions(
         nft, count=1, page=1, order="desc", return_type="json"
     )
 
@@ -396,45 +383,3 @@ def get_pool_by_id(pool_id: str) -> Optional[PoolState]:
     nft_txs = AssetTransaction.parse_obj(nft_txs[0])
 
     return get_pool_in_tx(tx_hash=nft_txs.tx_hash)
-
-
-def get_pool_history(
-    pool_id: str, page: int = 1, count: int = 100, order: str = "desc"
-) -> List[PoolHistory]:
-    """Get a list of pool history transactions.
-
-    This returns only a list of `PoolHistory` items, each providing enough information
-    to track down a particular pool transaction.
-
-    Args:
-        pool_id: The unique pool id.
-        page: The index of paginated results to return. Defaults to 1.
-        count: The total number of results to return. Defaults to 100.
-        order: Must be "asc" or "desc". Defaults to "desc".
-
-    Returns:
-        A list of `PoolHistory` items.
-    """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    nft = f"{addr.POOL_NFT_POLICY_ID}{pool_id}"
-    nft_txs = api.asset_transactions(
-        nft, count=count, page=page, order=order, return_type="json"
-    )
-
-    if len(nft_txs) == 0:
-        return []
-
-    pool_snapshots = []
-    for ph in nft_txs:
-        at = AssetTransaction.parse_obj(ph)
-        pool_snapshots.append(
-            PoolHistory(
-                tx_in=TxIn(tx_hash=at.tx_hash, tx_index=at.tx_index),
-                block_height=at.block_height,
-                time=datetime.fromtimestamp(at.block_time),
-            )
-        )
-
-    return pool_snapshots
