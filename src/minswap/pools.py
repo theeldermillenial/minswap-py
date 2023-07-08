@@ -3,6 +3,7 @@
 This mostly reflects the pool functionality in the minswap-blockfrostadapter.
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from typing import List, Optional, Tuple, Union
 
@@ -44,9 +45,12 @@ def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
         ValueError: No factory token found in utxos.
     """
     # Check to make sure the pool address is correct
-    correct_address: bool = utxo.address == addr.POOL.address.encode()
+    correct_address: bool = utxo.address in [a.address.encode() for a in addr.POOL]
     if not correct_address:
-        message = f"Invalid pool address. Expected {addr.POOL}"
+        message = (
+            "Invalid pool address. Expected one of "
+            + f"{[a.address.encode() for a in addr.POOL]}"
+        )
         logger.debug(message)
         raise InvalidPool(message)
 
@@ -302,9 +306,20 @@ def get_pools(
     Returns:
         A list of pools, and a list of non-pool UTxOs (if specified)
     """
-    utxos_raw = BlockfrostBackend.api().address_utxos(
-        addr.POOL.address.encode(), gather_pages=True, order="asc", return_type="json"
-    )
+    utxos_raw = []
+
+    with ThreadPoolExecutor() as executor:
+        threads = executor.map(
+            lambda x: BlockfrostBackend.api().address_utxos(
+                x.address.encode(),
+                gather_pages=True,
+                order="desc",
+                return_type="json",
+            ),
+            addr.POOL,
+        )
+        for pool_addr in threads:
+            utxos_raw.extend(pool_addr)
 
     utxos = AddressUtxoContent.parse_obj(utxos_raw)
 
@@ -344,7 +359,7 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
     pool_tx = BlockfrostBackend.api().transaction_utxos(tx_hash, return_type="json")
     pool_utxo = None
     for utxo in TxContentUtxo.parse_obj(pool_tx).outputs:
-        if utxo.address == addr.POOL.bech32:
+        if utxo.address in [pool.bech32 for pool in addr.POOL]:
             pool_utxo = utxo
             break
 
