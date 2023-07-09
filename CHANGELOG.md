@@ -1,5 +1,9 @@
 # Change log
 
+## v0.2.1
+
+There are now multiple Minswap pool addresses. This patch updates the code to read all of them when using `minswap.get_pools` and subsequent functions that require pool addresses.
+
 ## v0.2.0
 ### Improvements
 1. Added a blockfrost rate limiter. Every call to blockfrost adds to a time delayed counter, and prevents running into rate limits. This helps to prevent abuse of the blockfrost API.

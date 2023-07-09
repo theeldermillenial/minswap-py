@@ -33,6 +33,12 @@ addr1q9hw8fuex09vr3rqwtn4fzh9qxjlzjzh8aww684ln0rv0cfu3f0de6qkmh7c7yysfz808978wwe
 
 ## Changelog
 
+### 0.2.1
+
+There are now multiple Minswap pool addresses. This patch updates the code to read all of them when using `minswap.get_pools` and subsequent functions that require pool addresses.
+
+### v0.2.0
+
 Added CHANGELOG.md :)
 
 Improvements:
