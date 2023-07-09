@@ -1,1 +1,1 @@
-# minswap-py (v0.2.0)
+# minswap-py (v0.2.1)
