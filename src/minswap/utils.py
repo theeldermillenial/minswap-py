@@ -38,7 +38,16 @@ class BlockfrostBackend:
     total_calls = 0
     max_total_calls = MAX_CALLS
     backoff_time: int = 10
-    _api = blockfrost.BlockFrostApi(PROJECT_ID)
+    _api_url = getattr(blockfrost.ApiUrls, os.environ["NETWORK"]).value
+    _api = blockfrost.BlockFrostApi(PROJECT_ID, base_url=_api_url)
+    _network_parameters: minswap.models.EpochParamContent = (
+        minswap.models.EpochParamContent.parse_obj(
+            _api.epoch_latest_parameters(return_type="json")
+        )
+    )
+    _epoch_infos: minswap.models.EpochContent = minswap.models.EpochContent.parse_obj(
+        _api.epoch_latest(return_type="json")
+    )
 
     @classmethod
     def remaining_calls(cls) -> int:
@@ -73,7 +82,7 @@ class BlockfrostBackend:
         cls.last_call = now
 
     @classmethod
-    def api(cls):
+    def api(cls) -> blockfrost.BlockFrostApi:
         """Blockfrost API with rate limits."""
         cls._limiter()
         return cls._api
@@ -96,6 +105,19 @@ class BlockfrostBackend:
                 raise
 
         return wrapper
+
+    @classmethod
+    def protocol_parameters(cls) -> minswap.models.EpochParamContent:
+        """Cardano protocol parameters."""
+        if int(time.time()) > cls._epoch_infos.end_time:
+            cls._epoch_infos = minswap.models.EpochContent.parse_obj(
+                cls.api().epoch_latest(return_type="json")
+            )
+            cls._network_parameters = minswap.models.EpochParamContent.parse_obj(
+                cls.api().epoch_latest_parameters(return_type="json")
+            )
+
+        return cls._network_parameters
 
 
 def save_timestamp(

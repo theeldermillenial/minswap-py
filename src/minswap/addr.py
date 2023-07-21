@@ -9,6 +9,7 @@ Attributes:
     ORDER_TEST: Testnet pool address.
 """
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -16,19 +17,20 @@ from multiprocessing import cpu_count
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-import blockfrost
 import numpy
 import pandas
 import vaex
-from dotenv import dotenv_values
+from dotenv import load_dotenv
 from pyarrow import TimestampScalar
 
 from minswap.models import Address, PoolTransactionReference
-from minswap.utils import get_utxo, save_timestamp
+from minswap.utils import BlockfrostBackend, get_utxo, save_timestamp
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-POOL = [
+POOL_MAIN = [
     Address(
         bech32="addr1z8snz7c4974vzdpxu65ruphl3zjdvtxw8strf2c2tmqnxz2j2c79gy9l76sdg0xwhd7r0c0kna0tycz4y5s6mlenh8pq0xmsha"  # noqa
     ),
@@ -48,16 +50,30 @@ POOL = [
         bech32="addr1z8snz7c4974vzdpxu65ruphl3zjdvtxw8strf2c2tmqnxztnqm37tpj0q63s0qns5wfe4flqzqqg55760472n7yt4v8skpaj3k"  # noqa
     ),
 ]
-ORDER = Address(
+ORDER_MAIN = Address(
     bech32="addr1zxn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uw6j2c79gy9l76sdg0xwhd7r0c0kna0tycz4y5s6mlenh8pq6s3z70"  # noqa
 )
 
-POOL_TEST = Address(
-    bech32="addr_test1zrsnz7c4974vzdpxu65ruphl3zjdvtxw8strf2c2tmqnxzvrajt8r8wqtygrfduwgukk73m5gcnplmztc5tl5ngy0upqs8q93k"  # noqa
-)
+POOL_TEST = [
+    Address(
+        bech32="addr_test1zrsnz7c4974vzdpxu65ruphl3zjdvtxw8strf2c2tmqnxzvrajt8r8wqtygrfduwgukk73m5gcnplmztc5tl5ngy0upqs8q93k"  # noqa
+    )
+]
 ORDER_TEST = Address(
     bech32="addr_test1zzn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uwurajt8r8wqtygrfduwgukk73m5gcnplmztc5tl5ngy0upq932hcy"  # noqa
 )
+
+if os.environ.get("NETWORK", "main").lower() == "main":
+    POOL = POOL_MAIN
+    ORDER = ORDER_MAIN
+elif os.environ.get("NETWORK", None) == "test":
+    POOL = POOL_TEST
+    ORDER = ORDER_TEST
+else:
+    raise ValueError(
+        "The NETWORK environment variable was set, "
+        + "but did not match one of ['main', 'test']."
+    )
 
 # Policies
 FACTORY_POLICY_ID = "13aa2accf2e1561723aa26871e071fdf32c867cff7e7d50ad470d62f"
@@ -240,10 +256,7 @@ def get_pol_transaction_history(
     Returns:
         A list of `PoolHistory` items.
     """
-    env = dotenv_values()
-    api = blockfrost.BlockFrostApi(env["PROJECT_ID"])
-
-    txs = api.address_transactions(
+    txs = BlockfrostBackend.api().address_transactions(
         pol_addr, count=count, page=page, order=order, return_type="json"
     )
 
