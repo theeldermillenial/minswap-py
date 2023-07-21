@@ -1,4 +1,9 @@
-# Change log
+# Change
+
+## v0.3.0
+
+* Added wallet class.
+* Added ability to send lovelace to an address from a wallet object.
 
 ## v0.2.1
 
