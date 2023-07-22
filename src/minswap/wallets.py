@@ -7,7 +7,7 @@ import pycardano
 from pydantic import BaseModel, Field, root_validator
 
 import minswap.utils
-from minswap.models import Address, AddressUtxoContent, Assets
+from minswap.models import Address, AddressUtxoContent, AddressUtxoContentItem, Assets
 
 
 class Wallet(BaseModel):
@@ -75,7 +75,77 @@ class Wallet(BaseModel):
             ).encode()
         )
 
-    def msg(self, msg: List[Optional[str]] = []):
+    @property
+    def utxos(self) -> AddressUtxoContent:
+        """Get the UTXOs of the wallet."""
+        utxos = AddressUtxoContent.parse_obj(
+            minswap.utils.BlockfrostBackend.api().address_utxos(
+                address=self.address.bech32, return_type="json"
+            )
+        )
+
+        return utxos
+
+    @property
+    def collateral(self) -> Optional[AddressUtxoContentItem]:
+        """Search for a UTXO that can be used for collateral. None if none available."""
+        for utxo in self.utxos:
+            if "lovelace" in utxo.amount and len(utxo.amount) == 1:
+                if (
+                    utxo.amount["lovelace"] >= 5000000
+                    and utxo.amount["lovelace"] <= 20000000
+                ):
+                    return utxo
+
+        return None
+
+    def make_collateral_tx(self):
+        """Create a collateral creation transaction."""
+        return self.send(self.address, Assets(lovelace="5000000"), "create collateral")
+
+    def consolidate_utxos_tx(self, ignore_collateral=True):
+        """Create a UTXO collection tx.
+
+        To help keep a tidy wallet, it is useful to send all UTXOs to the same address
+        to merge the UTXOs. This is especially helpful when holding non-ADA tokens that
+        contain locked ADA.
+
+        By default, a collateral UTXO is identified and excluded from the consolidation
+        process. This can be overriden with `ignore_collateral=True`. In general, it
+        is recommended to keep a collateral, and this is largely a function input for
+        testing purposes.
+
+        Args:
+            ignore_collateral: Ignore collateral when consolidating. Defaults to True.
+        """
+        collateral = self.collateral
+        ignore_collateral = ignore_collateral & (collateral is not None)
+        consolidated = Assets()
+        for utxo in self.utxos:
+            if (
+                ignore_collateral
+                and utxo.tx_hash == collateral.tx_hash
+                and utxo.output_index == collateral.output_index
+            ):
+                continue
+            consolidated += utxo.amount
+        tx = self.send(
+            self.address,
+            consolidated,
+            "consolidate utxos",
+            ignore_collateral=ignore_collateral,
+        )
+        last_output = tx.transaction_body.outputs.pop()
+        tx.transaction_body.outputs[0].amount.coin += last_output.amount.coin
+        tx.transaction_witness_set = pycardano.TransactionWitnessSet(
+            pycardano.txbuilder.FAKE_VKEY, pycardano.txbuilder.FAKE_TX_SIGNATURE
+        )
+        tx = self._build_and_check(tx)
+        tx.transaction_witness_set = pycardano.TransactionWitnessSet()
+
+        return tx
+
+    def _msg(self, msg: List[Optional[str]] = []):
         """Create a metadata message.
 
         This follows CIP20.
@@ -92,7 +162,7 @@ class Wallet(BaseModel):
 
         return metadata
 
-    def fee(self, tx: Union[bytes, int]):
+    def _fee(self, tx: Union[bytes, int]):
         """Calculate the transaction fee."""
         if isinstance(tx, bytes):
             tx = len(tx)
@@ -100,29 +170,35 @@ class Wallet(BaseModel):
 
         return int(parameters.min_fee_a * tx + parameters.min_fee_b)
 
-    def max_fees(self):
+    def _max_fees(self):
         """Return the max possible transaction fee."""
         parameters = minswap.utils.BlockfrostBackend.protocol_parameters()
-        return self.fee(parameters.max_tx_size)
+        return self._fee(parameters.max_tx_size)
 
-    def build_and_check(self, tx: pycardano.Transaction):
+    def _build_and_check(self, tx: pycardano.Transaction):
         """Build transaction and update transaction fee.
 
         Precisely calculate the transaction fee. Since the size of the fee could
         influence the fee itself, this recursively calculates the fee until the fee
         settles on the lowest possible fee.
         """
-        fee = self.fee(tx.to_cbor("bytes"))
+        fee = self._fee(tx.to_cbor("bytes"))
         tx_body = tx.transaction_body
         while fee != tx.transaction_body.fee:
             tx_body.outputs[-1].amount.coin += tx_body.fee
             tx_body.fee = fee
             tx_body.outputs[-1].amount.coin -= tx_body.fee
-            fee = self.fee(tx.to_cbor("bytes"))
+            fee = self._fee(tx.to_cbor("bytes"))
 
         return tx
 
-    def send(self, address: Address, amount: Assets, msg: Optional[str] = None):
+    def send(
+        self,
+        address: Address,
+        amount: Assets,
+        msg: Optional[str] = None,
+        ignore_collateral=True,
+    ):
         """Create a send transaction. Does not actually submit the transaction.
 
         For now, this function only sends lovelace (ADA) to an address.
@@ -133,15 +209,24 @@ class Wallet(BaseModel):
             )
         )
 
-        message = self.msg(["send", msg])
+        message = self._msg(["send", msg])
 
         # Placeholder fee
-        fee = self.max_fees()
+        fee = self._max_fees()
 
         # Gather UTXOs for input
         tx_in = []
         send_assets = minswap.models.Assets(lovelace=-fee)
+        collateral = self.collateral
+        ignore_collateral = ignore_collateral & (collateral is not None)
         for utxo in utxos:
+            if (
+                ignore_collateral
+                and utxo.tx_hash == collateral.tx_hash  # type: ignore
+                and utxo.output_index == collateral.output_index  # type: ignore
+            ):
+                continue
+
             for unit, quantity in utxo.amount.items():
                 if quantity > 0 and send_assets[unit] < amount[unit]:
                     send_assets += utxo.amount
@@ -176,7 +261,7 @@ class Wallet(BaseModel):
             ),
             auxiliary_data=message,
         )
-        tx = self.build_and_check(tx)
+        tx = self._build_and_check(tx)
 
         tx.transaction_witness_set = pycardano.TransactionWitnessSet()
 

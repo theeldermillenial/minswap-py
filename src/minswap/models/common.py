@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 import pycardano
 from dotenv import load_dotenv
-from pydantic import BaseModel, root_validator, validator
+from pydantic import BaseModel, Field, root_validator, validator
 
 from minswap.models import blockfrost_models
 
@@ -251,13 +251,52 @@ class AddressUtxoContent(blockfrost_models.AddressUtxoContent, BaseList):
 class Input(blockfrost_models.Input):
     """An input to a transaction."""
 
+    amount: Assets = Field(
+        ...,
+        example=[
+            {"unit": "lovelace", "quantity": "42000000"},
+            {
+                "unit": "b0d07d45fe9514f80213f4020e5a61241458be626841cde717cb38a76e7574636f696e",  # noqa
+                "quantity": "12",
+            },
+        ],
+    )
+
+    @validator("amount", pre=True)
+    def _to_assets(cls, value):
+        if isinstance(value, list):
+            return Assets(**{i["unit"]: i["quantity"] for i in value})
+        else:
+            return value
+
 
 class Output(blockfrost_models.Output):
     """An output to a transaction."""
 
+    amount: Assets = Field(
+        ...,
+        example=[
+            {"unit": "lovelace", "quantity": "42000000"},
+            {
+                "unit": "b0d07d45fe9514f80213f4020e5a61241458be626841cde717cb38a76e7574636f696e",  # noqa
+                "quantity": "12",
+            },
+        ],
+    )
+
+    @validator("amount", pre=True)
+    def _to_assets(cls, value):
+        if isinstance(value, list):
+            return Assets(**{i["unit"]: i["quantity"] for i in value})
+        else:
+            return value
+
 
 class TxContentUtxo(blockfrost_models.TxContentUtxo):
     """A Transaction, containing all inputs and outputs."""
+
+    inputs: List[Input]
+    outputs: List[Output]
 
 
 class Address(BaseModel):

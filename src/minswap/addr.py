@@ -63,16 +63,16 @@ ORDER_TEST = Address(
     bech32="addr_test1zzn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uwurajt8r8wqtygrfduwgukk73m5gcnplmztc5tl5ngy0upq932hcy"  # noqa
 )
 
-if os.environ.get("NETWORK", "main").lower() == "main":
+if os.environ.get("NETWORK", "mainnet").lower() == "mainnet":
     POOL = POOL_MAIN
     ORDER = ORDER_MAIN
-elif os.environ.get("NETWORK", None) == "test":
+elif os.environ.get("NETWORK", None) == "preprod":
     POOL = POOL_TEST
     ORDER = ORDER_TEST
 else:
     raise ValueError(
-        "The NETWORK environment variable was set, "
-        + "but did not match one of ['main', 'test']."
+        f"The NETWORK environment variable was set to {os.environ.get('NETWORK')}. "
+        + "Must be one of ['main', 'preprod']."
     )
 
 # Policies

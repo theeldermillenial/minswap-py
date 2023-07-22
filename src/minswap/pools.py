@@ -57,14 +57,14 @@ def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
     # Check to make sure the pool has 1 factory token
     for asset in utxo.amount:
         has_factory: bool = (
-            f"{addr.FACTORY_POLICY_ID}{addr.FACTORY_ASSET_NAME}" == asset.unit
+            f"{addr.FACTORY_POLICY_ID}{addr.FACTORY_ASSET_NAME}" == asset
         )
         if has_factory:
             break
     if not has_factory:
         message = "Pool must have 1 factory token."
         logger.debug(message)
-        logger.debug(f"asset.unit={asset.unit}")
+        logger.debug(f"asset.unit={asset}")
         logger.debug(f"factory={addr.FACTORY_POLICY_ID}{addr.FACTORY_ASSET_NAME}")
         raise InvalidPool(message)
 
@@ -213,7 +213,7 @@ class PoolState(BaseModel):
         if self.unit_a != "lovelace":
             raise NotImplementedError("tvl for non-ADA pools is not implemented.")
 
-        tvl = (Decimal(self.reserve_a) / Decimal(10**6)).quantize(
+        tvl = 2 * (Decimal(self.reserve_a) / Decimal(10**6)).quantize(
             1 / Decimal(10**6)
         )
 
@@ -332,7 +332,7 @@ def get_pools(
                 PoolState(
                     tx_hash=utxo.tx_hash,
                     tx_index=utxo.output_index,
-                    assets=Assets(values=utxo.amount),
+                    assets=utxo.amount,
                     datum_hash=utxo.data_hash,
                 )
             )
@@ -371,7 +371,7 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
     out_state = PoolState(
         tx_hash=tx_hash,
         tx_index=utxo.output_index,
-        assets=Assets(values=utxo.amount),
+        assets=pool_utxo.amount,
         datum_hash=utxo.data_hash,
     )
 
