@@ -130,11 +130,11 @@ class Assets(BaseDict):
 
     __root__: Dict[str, int]
 
-    def unit(self, index: int = 0):
+    def unit(self, index: int = 0) -> str:
         """Units of asset at `index`."""
         return list(self.keys())[index]
 
-    def quantity(self, index: int = 0):
+    def quantity(self, index: int = 0) -> int:
         """Quantity of the asset at `index`."""
         return list(self.values())[index]
 

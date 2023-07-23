@@ -230,12 +230,12 @@ class PoolState(BaseModel):
                 and the second value is the price impact ratio.
         """
         assert len(asset) == 1, "Asset should only have one token."
-        assert asset.unit in [
+        assert asset.unit() in [
             self.unit_a,
             self.unit_b,
         ], f"Asset {asset.unit} is invalid for pool {self.unit_a}-{self.unit_b}"
 
-        if asset.unit == self.unit_a:
+        if asset.unit() == self.unit_a:
             reserve_in, reserve_out = self.reserve_a, self.reserve_b
             unit_out = self.unit_b
         else:
@@ -245,7 +245,7 @@ class PoolState(BaseModel):
         # Calculate the amount out
         numerator: int = asset.quantity() * 997 * reserve_out
         denominator: int = asset.quantity() * 997 + reserve_in * 1000
-        amount_out = Assets(unit=unit_out, quantity=numerator // denominator)
+        amount_out = Assets(**{unit_out: numerator // denominator})
 
         # Calculate the price impact
         price_numerator: int = (

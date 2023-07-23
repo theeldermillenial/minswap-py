@@ -1,13 +1,168 @@
 """Methods for wallets including building, signing, and submitting transactions."""
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Union
 
+import blockfrost
 import pycardano
 from pydantic import BaseModel, Field, root_validator
 
+import minswap.addr
+import minswap.pools
 import minswap.utils
 from minswap.models import Address, AddressUtxoContent, AddressUtxoContentItem, Assets
+
+ORDER_SCRIPT = pycardano.PlutusV1Script(
+    bytes.fromhex(
+        "59014f59014c01000032323232323232322223232325333009300e30070021323233533300b33"
+        + "70e9000180480109118011bae30100031225001232533300d3300e22533301300114a02a666"
+        + "01e66ebcc04800400c5288980118070009bac3010300c300c300c300c300c300c300c007149"
+        + "858dd48008b18060009baa300c300b3754601860166ea80184ccccc0288894ccc0400044008"
+        + "4c8c94ccc038cd4ccc038c04cc030008488c008dd718098018912800919b8f0014891ce1317"
+        + "b152faac13426e6a83e06ff88a4d62cce3c1634ab0a5ec133090014a0266008444a00226600"
+        + "a446004602600a601a00626600a008601a006601e0026ea8c03cc038dd5180798071baa300f"
+        + "300b300e3754601e00244a0026eb0c03000c92616300a001375400660106ea8c024c020dd50"
+        + "00aab9d5744ae688c8c0088cc0080080048c0088cc00800800555cf2ba15573e6e1d200201"
+    )
+)
+
+
+BATCHER_FEE = 2000000
+DEPOSIT = 2000000
+
+
+@dataclass
+class PlutusPartAddress(pycardano.PlutusData):
+    """Encode a plutus address part (i.e. payment, stake, etc)."""
+
+    CONSTR_ID = 0
+    address: bytes
+
+
+@dataclass
+class PlutusNone(pycardano.PlutusData):
+    """Placeholder for a receiver datum."""
+
+    CONSTR_ID = 1
+
+
+@dataclass
+class _PlutusConstrWrapper(pycardano.PlutusData):
+    """Hidden wrapper to match Minswap stake address constructs."""
+
+    CONSTR_ID = 0
+    wrapped: Union["_PlutusConstrWrapper", PlutusPartAddress]
+
+
+@dataclass
+class PlutusFullAddress(pycardano.PlutusData):
+    """A full address, including payment and staking keys."""
+
+    CONSTR_ID = 0
+    payment: PlutusPartAddress
+    stake: _PlutusConstrWrapper
+
+    @classmethod
+    def from_address(cls, address: Address):
+        """Parse an Address object to a PlutusFullAddress."""
+        assert address.stake is not None
+        assert address.payment is not None
+        stake = _PlutusConstrWrapper(
+            _PlutusConstrWrapper(
+                PlutusPartAddress(bytes.fromhex(str(address.stake.staking_part)))
+            )
+        )
+        return PlutusFullAddress(
+            PlutusPartAddress(bytes.fromhex(str(address.payment.payment_part))),
+            stake=stake,
+        )
+
+
+@dataclass
+class AssetClass(pycardano.PlutusData):
+    """An asset class. Separates out token policy and asset name."""
+
+    policy: bytes
+    asset_name: bytes
+
+    @classmethod
+    def from_assets(cls, asset: Assets):
+        """Parse an Assets object into an AssetClass object."""
+        assert len(asset) == 1
+
+        return AssetClass(
+            policy=bytes.fromhex(asset.unit()[:56]),
+            asset_name=bytes.fromhex(asset.unit()[56:]),
+        )
+
+
+@dataclass
+class SwapExactIn(pycardano.PlutusData):
+    """Swap exact in order datum."""
+
+    CONSTR_ID = 0
+    desired_coin: AssetClass
+    minimum_receive: int
+
+    @classmethod
+    def from_assets(cls, asset: Assets):
+        """Parse an Assets object into a SwapExactIn datum."""
+        assert len(asset) == 1
+
+        return SwapExactIn(
+            desired_coin=AssetClass.from_assets(asset), minimum_receive=asset.quantity()
+        )
+
+
+@dataclass
+class SwapExactOut(pycardano.PlutusData):
+    """Swap exact out order datum."""
+
+    CONSTR_ID = 1
+    desired_coin: AssetClass
+    expected_receive: int
+
+    @classmethod
+    def from_assets(cls, asset: Assets):
+        """Parse an Assets object into a SwapExactOut datum."""
+        assert len(asset) == 1
+
+        return SwapExactOut(
+            desired_coin=AssetClass.from_assets(asset),
+            expected_receive=asset.quantity(),
+        )
+
+
+@dataclass
+class ReceiverDatum(pycardano.PlutusData):
+    """The receiver address."""
+
+    CONSTR_ID = 1
+    datum_hash: Optional[pycardano.DatumHash]
+
+
+@dataclass
+class OrderDatum(pycardano.PlutusData):
+    """An order datum."""
+
+    sender: PlutusFullAddress
+    receiver: PlutusFullAddress
+    receiver_datum_hash: Optional[pycardano.DatumHash]
+    step: Union[SwapExactIn, SwapExactOut]
+    batcher_fee: int = BATCHER_FEE
+    deposit: int = DEPOSIT
+
+
+ORDER_METADATA = dict(
+    DEPOSIT_ORDER="Deposit Order",
+    CANCEL_ORDER="Cancel Order",
+    ONE_SIDE_DEPOSIT_ORDER="Zap Order",
+    SWAP_EXACT_IN_ORDER="Swap Exact In Order",
+    SWAP_EXACT_IN_LIMIT_ORDER="Swap Exact In Limit Order",
+    SWAP_EXACT_OUT_ORDER="Swap Exact Out Order",
+    WITHDRAW_ORDER="Withdraw Order",
+)
 
 
 class Wallet(BaseModel):
@@ -18,6 +173,11 @@ class Wallet(BaseModel):
         f".wallet/{os.environ.get('NETWORK','mainnet').lower()}_mnemonic.txt"
     )
     hdwallet: Optional[pycardano.HDWallet]
+
+    context: pycardano.ChainContext = pycardano.BlockFrostChainContext(
+        os.environ["PROJECT_ID"],
+        base_url=getattr(blockfrost.ApiUrls, os.environ["NETWORK"]).value,
+    )
 
     class Config:  # noqa
         arbitrary_types_allowed = True
@@ -101,7 +261,9 @@ class Wallet(BaseModel):
 
     def make_collateral_tx(self):
         """Create a collateral creation transaction."""
-        return self.send(self.address, Assets(lovelace="5000000"), "create collateral")
+        return self.send_tx(
+            self.address, Assets(lovelace="5000000"), "create collateral"
+        )
 
     def consolidate_utxos_tx(self, ignore_collateral=True):
         """Create a UTXO collection tx.
@@ -129,7 +291,7 @@ class Wallet(BaseModel):
             ):
                 continue
             consolidated += utxo.amount
-        tx = self.send(
+        tx = self.send_tx(
             self.address,
             consolidated,
             "consolidate utxos",
@@ -192,92 +354,132 @@ class Wallet(BaseModel):
 
         return tx
 
-    def send(
+    def send_tx(
         self,
         address: Address,
         amount: Assets,
         msg: Optional[str] = None,
-        ignore_collateral=True,
     ):
         """Create a send transaction. Does not actually submit the transaction.
 
         For now, this function only sends lovelace (ADA) to an address.
         """
-        utxos = AddressUtxoContent.parse_obj(
-            minswap.utils.BlockfrostBackend.api().address_utxos(
-                self.address.bech32, return_type="json"
-            )
-        )
-
         message = self._msg(["send", msg])
 
-        # Placeholder fee
-        fee = self._max_fees()
-
-        # Gather UTXOs for input
-        tx_in = []
-        send_assets = minswap.models.Assets(lovelace=-fee)
-        collateral = self.collateral
-        ignore_collateral = ignore_collateral & (collateral is not None)
-        for utxo in utxos:
-            if (
-                ignore_collateral
-                and utxo.tx_hash == collateral.tx_hash  # type: ignore
-                and utxo.output_index == collateral.output_index  # type: ignore
-            ):
-                continue
-
-            for unit, quantity in utxo.amount.items():
-                if quantity > 0 and send_assets[unit] < amount[unit]:
-                    send_assets += utxo.amount
-                    tx_in.append(
-                        pycardano.TransactionInput.from_primitive(
-                            [utxo.tx_hash, utxo.output_index]
-                        )
-                    )
-                    break
-        send_assets.__root__["lovelace"] += fee
+        tx_builder = pycardano.TransactionBuilder(self.context, auxiliary_data=message)
+        tx_builder.add_input_address(self.address.address)
 
         # Create UTXOs
-        tx_out: List[pycardano.TransactionOutput] = [
-            pycardano.TransactionOutput(address.address, amount["lovelace"]),
-            pycardano.TransactionOutput(
-                self.address.address,
-                int(send_assets["lovelace"] - amount["lovelace"] - fee),
-            ),
-        ]
-
-        # Update fee
-        tx_body = pycardano.TransactionBody(
-            inputs=tx_in,
-            outputs=tx_out,
-            auxiliary_data_hash=message.hash(),
-            fee=fee,
+        tx_builder.add_output(
+            pycardano.TransactionOutput(address.address, amount["lovelace"])
         )
+
+        tx_body = tx_builder.build(change_address=self.address.address)
+
         tx = pycardano.Transaction(
             tx_body,
             pycardano.TransactionWitnessSet(
-                pycardano.txbuilder.FAKE_VKEY, pycardano.txbuilder.FAKE_TX_SIGNATURE
+                vkey_witnesses=[
+                    pycardano.VerificationKeyWitness(
+                        pycardano.txbuilder.FAKE_VKEY,
+                        pycardano.txbuilder.FAKE_TX_SIGNATURE,
+                    )
+                ],
             ),
             auxiliary_data=message,
         )
         tx = self._build_and_check(tx)
+        tx.transaction_witness_set.vkey_witnesses = []
 
-        tx.transaction_witness_set = pycardano.TransactionWitnessSet()
+        return tx
+
+    def swap(
+        self,
+        pool: Union[minswap.pools.PoolState, str],
+        in_assets: Optional[Assets] = None,
+        out_assets: Optional[Assets] = None,
+        slippage=0.005,
+        msg: Optional[str] = None,
+    ):
+        """Perform a swap on the designated pool.
+
+        _extended_summary_
+
+        Args:
+            pool: _description_
+            in_assets: _description_. Defaults to None.
+            out_assets: _description_. Defaults to None.
+            slippage: _description_. Defaults to 0.005.
+            msg: _description_. Defaults to None.
+
+        Raises:
+            ValueError: _description_
+
+        Returns:
+            An unsigned transaction.
+        """
+        message = self._msg(["Swap: Exact In", msg])
+
+        tx_builder = pycardano.TransactionBuilder(self.context, auxiliary_data=message)
+        tx_builder.add_input_address(self.address.address)
+
+        # Get latest pool state if not supplied
+        if isinstance(pool, str):
+            pool = minswap.pools.get_pool_by_id(pool)  # type: ignore
+
+        assert pool is not None and isinstance(pool, minswap.pools.PoolState)
+
+        # ExactSwapIn if input is supplied
+        if in_assets is not None:
+            if pool.unit_a in in_assets and pool.unit_b in in_assets:
+                raise ValueError("Only one asset can be place in in_assets.")
+            out_amount, _ = pool.get_amount_out(in_assets)
+            out_amount.__root__[out_amount.unit()] = int(
+                out_amount.__root__[out_amount.unit()] * (1 - slippage)
+            )
+            step = SwapExactIn.from_assets(out_amount)
+
+            address = PlutusFullAddress.from_address(self.address)
+            order_datum = OrderDatum(address, address, PlutusNone(), step)
+            tx_builder.add_output(
+                pycardano.TransactionOutput(
+                    address=minswap.addr.STAKE_ORDER.address,
+                    amount=in_assets["lovelace"]
+                    + order_datum.batcher_fee
+                    + order_datum.deposit,
+                    datum=order_datum,
+                ),
+                datum=order_datum,
+                add_datum_to_witness=True,
+            )
+
+        tx_body = tx_builder.build(change_address=self.address.address)
+
+        tx = pycardano.Transaction(
+            tx_body,
+            pycardano.TransactionWitnessSet(
+                vkey_witnesses=[
+                    pycardano.VerificationKeyWitness(
+                        pycardano.txbuilder.FAKE_VKEY,
+                        pycardano.txbuilder.FAKE_TX_SIGNATURE,
+                    )
+                ],
+                plutus_data=[order_datum],
+            ),
+            auxiliary_data=message,
+        )
+        tx = self._build_and_check(tx)
+        tx.transaction_witness_set.vkey_witnesses = []
 
         return tx
 
     def sign(self, tx: pycardano.Transaction):
         """Sign a transaction."""
         signature = self.payment_signing_key.sign(tx.transaction_body.hash())
-        witness = pycardano.TransactionWitnessSet(
-            [pycardano.VerificationKeyWitness(self.payment_verification_key, signature)]
-        )
-
-        # build transaction
-        tx = pycardano.Transaction(
-            tx.transaction_body, witness, auxiliary_data=tx.auxiliary_data
-        )
+        witness = [
+            pycardano.VerificationKeyWitness(self.payment_verification_key, signature)
+        ]
+        tx.transaction_witness_set.vkey_witnesses = witness
 
         return tx
 

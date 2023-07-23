@@ -1,6 +1,28 @@
+import os
 import time
 
+from dotenv import load_dotenv
+
+from minswap.models import Assets
+from minswap.pools import get_pool_by_id
 from minswap.wallets import Wallet
+
+load_dotenv()
+
+NETWORK = os.environ["NETWORK"]
+
+if NETWORK == "main":
+    ADAMIN = "6aa2153e1ae896a95539c9d62f76cedcdabdcdf144e564b8955f609d660cf6a2"
+elif NETWORK == "preprod":
+    ADAMIN = "3bb0079303c57812462dec9de8fb867cef8fd3768de7f12c77f6f0dd80381d0d"
+else:
+    raise ValueError(
+        "The network environment variable must be one of ['main', 'preprod']"
+    )
+adamin_pool = get_pool_by_id(ADAMIN)
+assert adamin_pool is not None
+
+print(f"ADA/MIN price: {adamin_pool.price[0]}")
 
 wallet = Wallet()
 
@@ -29,9 +51,13 @@ if collateral is None:
     print(wallet.collateral)
 
 print()
-print("Consolidating UTXOs (including collateral)")
-tx = wallet.consolidate_utxos_tx(ignore_collateral=False)
+print("Swapping ADA for MIN...")
+in_asset = Assets(lovelace=50000000)
+tx = wallet.swap(pool=ADAMIN, in_assets=in_asset)
 signed_tx = wallet.sign(tx)
+# print(signed_tx.transaction_body)
+# print(signed_tx)
+# quit()
 tx_hash = wallet.submit(signed_tx)
 
 while tx_hash not in [utxo.tx_hash for utxo in wallet.utxos]:

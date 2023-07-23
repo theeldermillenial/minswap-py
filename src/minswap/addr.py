@@ -53,6 +53,9 @@ POOL_MAIN = [
 ORDER_MAIN = Address(
     bech32="addr1zxn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uw6j2c79gy9l76sdg0xwhd7r0c0kna0tycz4y5s6mlenh8pq6s3z70"  # noqa
 )
+STAKE_ORDER_MAIN = Address(
+    bech32="addr1zxn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uw6j2c79gy9l76sdg0xwhd7r0c0kna0tycz4y5s6mlenh8pq6s3z70"  # noqa
+)
 
 POOL_TEST = [
     Address(
@@ -62,13 +65,18 @@ POOL_TEST = [
 ORDER_TEST = Address(
     bech32="addr_test1zzn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uwurajt8r8wqtygrfduwgukk73m5gcnplmztc5tl5ngy0upq932hcy"  # noqa
 )
+STAKE_ORDER_TEST = Address(
+    bech32="addr_test1zzn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uwurajt8r8wqtygrfduwgukk73m5gcnplmztc5tl5ngy0upq932hcy"  # noqa
+)
 
 if os.environ.get("NETWORK", "mainnet").lower() == "mainnet":
     POOL = POOL_MAIN
     ORDER = ORDER_MAIN
+    STAKE_ORDER = STAKE_ORDER_MAIN
 elif os.environ.get("NETWORK", None) == "preprod":
     POOL = POOL_TEST
     ORDER = ORDER_TEST
+    STAKE_ORDER = STAKE_ORDER_TEST
 else:
     raise ValueError(
         f"The NETWORK environment variable was set to {os.environ.get('NETWORK')}. "
