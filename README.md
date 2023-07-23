@@ -1,4 +1,4 @@
-# minswap-py (v0.3.0-dev1)
+# minswap-py (v0.3.0-dev2)
 <p align="center">
     <img src="https://img.shields.io/pypi/status/minswap-py?style=flat-square" />
     <img src="https://img.shields.io/pypi/dm/minswap-py?style=flat-square" />
@@ -33,7 +33,7 @@ addr1q9hw8fuex09vr3rqwtn4fzh9qxjlzjzh8aww684ln0rv0cfu3f0de6qkmh7c7yysfz808978wwe
 
 ## Changelog
 
-### 0.3.0-dev1
+### 0.3.0-dev2
 
 There are now multiple Minswap pool addresses. This patch updates the code to read all of them when using `minswap.get_pools` and subsequent functions that require pool addresses.
 
