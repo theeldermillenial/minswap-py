@@ -91,10 +91,36 @@ class AssetClass(pycardano.PlutusData):
         """Parse an Assets object into an AssetClass object."""
         assert len(asset) == 1
 
-        return AssetClass(
-            policy=bytes.fromhex(asset.unit()[:56]),
-            asset_name=bytes.fromhex(asset.unit()[56:]),
-        )
+        if asset.unit() == "lovelace":
+            return AssetClass(
+                policy=b"",
+                asset_name=b"",
+            )
+        else:
+            return AssetClass(
+                policy=bytes.fromhex(asset.unit()[:56]),
+                asset_name=bytes.fromhex(asset.unit()[56:]),
+            )
+
+
+def asset_to_value(assets: Assets) -> pycardano.Value:
+    """Convert an Assets object to a pycardano.Value."""
+    coin = assets["lovelace"]
+    cnts = {}
+    for unit, quantity in assets.items():
+        if unit == "lovelace":
+            continue
+        policy = bytes.fromhex(unit[:56])
+        asset_name = bytes.fromhex(unit[56:])
+        if policy not in cnts:
+            cnts[policy] = {asset_name: quantity}
+        else:
+            cnts[policy][asset_name] = quantity
+
+    if len(cnts) == 0:
+        return pycardano.Value.from_primitive([coin])
+    else:
+        return pycardano.Value.from_primitive([coin, cnts])
 
 
 @dataclass
@@ -152,17 +178,6 @@ class OrderDatum(pycardano.PlutusData):
     step: Union[SwapExactIn, SwapExactOut]
     batcher_fee: int = BATCHER_FEE
     deposit: int = DEPOSIT
-
-
-ORDER_METADATA = dict(
-    DEPOSIT_ORDER="Deposit Order",
-    CANCEL_ORDER="Cancel Order",
-    ONE_SIDE_DEPOSIT_ORDER="Zap Order",
-    SWAP_EXACT_IN_ORDER="Swap Exact In Order",
-    SWAP_EXACT_IN_LIMIT_ORDER="Swap Exact In Limit Order",
-    SWAP_EXACT_OUT_ORDER="Swap Exact Out Order",
-    WITHDRAW_ORDER="Withdraw Order",
-)
 
 
 class Wallet(BaseModel):
@@ -262,7 +277,7 @@ class Wallet(BaseModel):
     def make_collateral_tx(self):
         """Create a collateral creation transaction."""
         return self.send_tx(
-            self.address, Assets(lovelace="5000000"), "create collateral"
+            self.address, Assets(lovelace="5000000"), "Create Collateral."
         )
 
     def consolidate_utxos_tx(self, ignore_collateral=True):
@@ -294,7 +309,7 @@ class Wallet(BaseModel):
         tx = self.send_tx(
             self.address,
             consolidated,
-            "consolidate utxos",
+            "Consolidate UTxOs.",
             ignore_collateral=ignore_collateral,
         )
         last_output = tx.transaction_body.outputs.pop()
@@ -332,11 +347,6 @@ class Wallet(BaseModel):
 
         return int(parameters.min_fee_a * tx + parameters.min_fee_b)
 
-    def _max_fees(self):
-        """Return the max possible transaction fee."""
-        parameters = minswap.utils.BlockfrostBackend.protocol_parameters()
-        return self._fee(parameters.max_tx_size)
-
     def _build_and_check(self, tx: pycardano.Transaction):
         """Build transaction and update transaction fee.
 
@@ -359,12 +369,24 @@ class Wallet(BaseModel):
         address: Address,
         amount: Assets,
         msg: Optional[str] = None,
-    ):
+    ) -> pycardano.Transaction:
         """Create a send transaction. Does not actually submit the transaction.
 
         For now, this function only sends lovelace (ADA) to an address.
+
+        TODO:
+            Add ability to send to multiple addresses.
+
+        Args:
+            address: Address to send funds to.
+            amount: The amount of assets to send.
+            msg: An optuional metadata message to include in the transaction.
+                Defaults to None.
+
+        Returns:
+            An unsigned `pycardano.Transaction`.
         """
-        message = self._msg(["send", msg])
+        message = self._msg(["Send", msg])
 
         tx_builder = pycardano.TransactionBuilder(self.context, auxiliary_data=message)
         tx_builder.add_input_address(self.address.address)
@@ -395,7 +417,7 @@ class Wallet(BaseModel):
 
     def swap(
         self,
-        pool: Union[minswap.pools.PoolState, str],
+        pool: Optional[Union[minswap.pools.PoolState, str]],
         in_assets: Optional[Assets] = None,
         out_assets: Optional[Assets] = None,
         slippage=0.005,
@@ -403,55 +425,109 @@ class Wallet(BaseModel):
     ):
         """Perform a swap on the designated pool.
 
-        _extended_summary_
+        This function performs three different tasks based on what inputs are provided:
+        1. SwapExactIn - When only `in_assets` is provided
+        2. SwapExactOut - When only the `out_assets` is provided.
+        3. LimitOrder - When both `in_assets` and `out_assets` are provided.
+
+        Note:
+            Remember, each transaction requires a batcher fee and deposit (where the
+            deposit is returned when the swap is completed). So, spending 1000 ADA to
+            buy MIN will required 1004 ADA to submit the transaction.
+
+        When only input assets are provided (`in_assets`), a SwapExactIn order is
+        executed. The SwapExactIn order requests that the smart contract buy as many of
+        the token as possible with the provided input assets. The SwapExactIn order also
+        contains a minimum expected receive value, and this is calculated by the current
+        expected output based on the current price minus the slippage ratio. For
+        example, if the price of 1 MIN is 1ADA, assuming an exact swap then 1 ADA will
+        buy 1 MIN coin. However, the requested minimum will by default be set to 0.995
+        MIN since the default allowed slippage is 0.005 (0.5%). If the price changes so
+        that you cannot receive the requested minimum, it will delay executing until the
+        order is cancelled or the price moves back into range.
+
+        When only output assets are provided (`out_assets`), a SwapExactOut order is
+        executed. The SwapExactOut order requests that the smart contract buy a specific
+        amount of token with the provided input assets. The SwapExactOut order also
+        contains an expected receive value, and will use the supplied funds to buy the
+        specified amount of token (if possible). Thus, slippage in this case is applied
+        to the quantity of input token, providing more than the needed amount of token
+        to buy the specified token. Using the same example as before where the price of
+        1 MIN is 1 ADA, the input amount of ADA will be 1.005 in order to buy 1 MIN when
+        the slippage is set to 0.005 (0.5%). Any remaining input tokens after the swap
+        are returned as change.
+
+        When both the input and output assets are specified, then a limit order is
+        executed. The amount of supplied token is set to `in_assets` and the minimum
+        amount received is set to `out_assets`. The price is set by the inherent ratio
+        of output to input tokens.
 
         Args:
-            pool: _description_
-            in_assets: _description_. Defaults to None.
-            out_assets: _description_. Defaults to None.
-            slippage: _description_. Defaults to 0.005.
-            msg: _description_. Defaults to None.
-
-        Raises:
-            ValueError: _description_
+            pool: The pool to submit the transaction to. Only needed when submitting
+                swaps other than limit orders. Defaults to None.
+            in_assets: The input assets for the swap. Defaults to None.
+            out_assets: The output assets for the swap. Defaults to None.
+            slippage: Ratio used to modify either input or output tokens. Not used when
+                both input and output tokens are specified. Defaults to 0.005.
+            msg: Optional message to include in the transaction. Defaults to None.
 
         Returns:
             An unsigned transaction.
         """
-        message = self._msg(["Swap: Exact In", msg])
+        # Basic checks
+        for asset in [in_assets, out_assets]:
+            if asset is not None:
+                assert len(asset) == 1
+
+        # If both are specified, use a limit order
+        if in_assets is not None and out_assets is not None:
+            message = self._msg(["Swap: Limit Order"])
+        # If in_assets defined, swap in. If out_assets defined, swap out.
+        elif in_assets is not None or out_assets is not None:
+            assert pool is not None
+            if isinstance(pool, str):
+                pool = minswap.pools.get_pool_by_id(pool)  # type: ignore
+
+            assert isinstance(pool, minswap.pools.PoolState)
+
+            if in_assets is not None:
+                message = self._msg(["Swap: Exact In", msg])
+                out_assets, _ = pool.get_amount_out(in_assets)
+                out_assets.__root__[out_assets.unit()] = int(
+                    out_assets.__root__[out_assets.unit()] * (1 - slippage)
+                )
+                step = SwapExactIn.from_assets(out_assets)
+            elif out_assets is not None:
+                message = self._msg(["Swap: Exact Out", msg])
+                in_assets, _ = pool.get_amount_in(out_assets)
+                in_assets.__root__[in_assets.unit()] = int(
+                    in_assets.__root__[in_assets.unit()] * (1 + slippage)
+                )
+                step = SwapExactOut.from_assets(in_assets)
+            else:
+                raise ValueError(
+                    "Something went wrong. Neither in_assets nor out_assets were set."
+                )
+        else:
+            raise ValueError("Either in_assets, out_assets, or both must be defined.")
 
         tx_builder = pycardano.TransactionBuilder(self.context, auxiliary_data=message)
         tx_builder.add_input_address(self.address.address)
 
-        # Get latest pool state if not supplied
-        if isinstance(pool, str):
-            pool = minswap.pools.get_pool_by_id(pool)  # type: ignore
-
-        assert pool is not None and isinstance(pool, minswap.pools.PoolState)
-
-        # ExactSwapIn if input is supplied
-        if in_assets is not None:
-            if pool.unit_a in in_assets and pool.unit_b in in_assets:
-                raise ValueError("Only one asset can be place in in_assets.")
-            out_amount, _ = pool.get_amount_out(in_assets)
-            out_amount.__root__[out_amount.unit()] = int(
-                out_amount.__root__[out_amount.unit()] * (1 - slippage)
-            )
-            step = SwapExactIn.from_assets(out_amount)
-
-            address = PlutusFullAddress.from_address(self.address)
-            order_datum = OrderDatum(address, address, PlutusNone(), step)
-            tx_builder.add_output(
-                pycardano.TransactionOutput(
-                    address=minswap.addr.STAKE_ORDER.address,
-                    amount=in_assets["lovelace"]
-                    + order_datum.batcher_fee
-                    + order_datum.deposit,
-                    datum=order_datum,
-                ),
-                datum=order_datum,
-                add_datum_to_witness=True,
-            )
+        address = PlutusFullAddress.from_address(self.address)
+        order_datum = OrderDatum(address, address, PlutusNone(), step)
+        in_assets.__root__["lovelace"] = (
+            in_assets["lovelace"] + order_datum.batcher_fee + order_datum.deposit
+        )
+        tx_builder.add_output(
+            pycardano.TransactionOutput(
+                address=minswap.addr.STAKE_ORDER.address,
+                amount=asset_to_value(in_assets),
+                datum_hash=order_datum.hash(),
+            ),
+            datum=order_datum,
+            add_datum_to_witness=True,
+        )
 
         tx_body = tx_builder.build(change_address=self.address.address)
 

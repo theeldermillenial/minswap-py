@@ -11,6 +11,8 @@ load_dotenv()
 
 NETWORK = os.environ["NETWORK"]
 
+MIN_POLICY = "e16c2dc8ae937e8d3790c7fd7168d7b994621ba14ca11415f39fed724d494e"
+
 if NETWORK == "main":
     ADAMIN = "6aa2153e1ae896a95539c9d62f76cedcdabdcdf144e564b8955f609d660cf6a2"
 elif NETWORK == "preprod":
@@ -31,33 +33,32 @@ for utxo in wallet.utxos:
     print(utxo.dict())
 
 print()
-collateral = wallet.collateral
-print("Collateral (None if there is no collateral UTXO):")
-print(collateral)
-
-if collateral is None:
-    print()
-    print("Could not find collateral. Creating collateral generation transaction.")
-
-    tx = wallet.make_collateral_tx()
-    signed_tx = wallet.sign(tx)
-    tx_hash = wallet.submit(signed_tx)
-
-    while tx_hash not in [utxo.tx_hash for utxo in wallet.utxos]:
-        print("Collateral is not yet available, checking again in 5s...")
-        time.sleep(5)
-
-    print("Newly created collateral:")
-    print(wallet.collateral)
-
-print()
-print("Swapping ADA for MIN...")
+print(f"Swapping 50 ADA for MIN...")
 in_asset = Assets(lovelace=50000000)
 tx = wallet.swap(pool=ADAMIN, in_assets=in_asset)
 signed_tx = wallet.sign(tx)
-# print(signed_tx.transaction_body)
-# print(signed_tx)
-# quit()
+tx_hash = wallet.submit(signed_tx)
+
+while tx_hash not in [utxo.tx_hash for utxo in wallet.utxos]:
+    print("Waiting for transaction to be processed, waiting 10 seconds...")
+    time.sleep(10)
+
+"""Need to add a pause, or method to wait for swap to complete. For now, just wait."""
+print()
+print("Pausing for 60 seconds to wait for transaction to complete...")
+time.sleep(60)
+
+print()
+print("UTXOs:")
+in_asset = Assets(**{MIN_POLICY: 0})
+for utxo in wallet.utxos:
+    print(utxo.dict())
+    in_asset.__root__[MIN_POLICY] += utxo.amount[MIN_POLICY]
+
+print()
+print(f"Swapping {in_asset[MIN_POLICY]} MIN for ADA...")
+tx = wallet.swap(pool=ADAMIN, in_assets=in_asset)
+signed_tx = wallet.sign(tx)
 tx_hash = wallet.submit(signed_tx)
 
 while tx_hash not in [utxo.tx_hash for utxo in wallet.utxos]:
