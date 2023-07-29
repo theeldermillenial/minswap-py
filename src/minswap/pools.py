@@ -3,6 +3,7 @@
 This mostly reflects the pool functionality in the minswap-blockfrostadapter.
 """
 import logging
+import math
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from typing import List, Optional, Tuple, Union
@@ -10,7 +11,7 @@ from typing import List, Optional, Tuple, Union
 from pydantic import BaseModel, root_validator
 
 from minswap import addr
-from minswap.assets import naturalize_assets
+from minswap.assets import get_asset_info, naturalize_assets
 from minswap.models import AddressUtxoContent  # type: ignore[attr-defined]
 from minswap.models import (
     AddressUtxoContentItem,
@@ -292,6 +293,49 @@ class PoolState(BaseModel):
         price_impact: float = price_numerator / price_denominator
 
         return amount_in, price_impact
+
+    def get_zap_in_lp(self, asset: Assets) -> Tuple[Assets, float]:
+        """Calculate the estimate LP received for zapping in an amount of asset.
+
+        Args:
+            asset: An asset with a defined quantity.
+
+        Returns:
+            The estimated amount of lp received for the zap in quantity.
+        """
+        assert len(asset) == 1, "Asset should only have one token."
+        assert asset.unit() in [
+            self.unit_a,
+            self.unit_b,
+        ], f"Asset {asset.unit} is invalid for pool {self.unit_a}-{self.unit_b}"
+        if asset.unit == self.unit_a:
+            reserve_in, reserve_out = self.reserve_a, self.reserve_b
+        else:
+            reserve_in, reserve_out = self.reserve_b, self.reserve_a
+
+        quantity_in = int(
+            math.sqrt(
+                1997**2 * reserve_in**2
+                + 4 * 997 * 1000 * asset.quantity() * reserve_in
+            )
+            - 1997 * reserve_in
+        ) / (2 * 997)
+        asset_in = Assets(**{asset.unit(): quantity_in})
+
+        asset_out, price_impact = self.get_amount_out(asset_in)
+
+        total_lp = get_asset_info(self.lp_token, update_cache=True)
+
+        assert total_lp is not None
+
+        quantity_lp = int(asset_out.quantity() * int(total_lp.quantity)) / (
+            reserve_out - asset_out.quantity()
+        )
+
+        lp_out = Assets(**{self.lp_token: quantity_lp})
+
+        # TODO: Make sure price impact is correct
+        return lp_out, price_impact
 
 
 def get_pools(

@@ -161,6 +161,45 @@ class SwapExactOut(pycardano.PlutusData):
 
 
 @dataclass
+class Deposit(pycardano.PlutusData):
+    """Swap exact out order datum."""
+
+    CONSTR_ID = 2
+    minimum_lp: int
+
+
+@dataclass
+class Withdraw(pycardano.PlutusData):
+    """Swap exact out order datum."""
+
+    CONSTR_ID = 3
+    minimum_asset_a: int
+    minimum_asset_b: int
+
+
+@dataclass
+class ZapIn(pycardano.PlutusData):
+    """Swap exact out order datum."""
+
+    CONSTR_ID = 4
+    desired_coin: AssetClass
+    minimum_receive: int
+
+    @classmethod
+    def from_assets(cls, asset: Assets):
+        """Parse an Assets object into a SwapExactOut datum."""
+        assert len(asset) == 1
+
+        # Sanity check: make sure asset is an LP token
+        assert asset.unit().startswith(minswap.addr.LP_POLICY_ID)
+
+        return ZapIn(
+            desired_coin=AssetClass.from_assets(asset),
+            minimum_receive=asset.quantity(),
+        )
+
+
+@dataclass
 class ReceiverDatum(pycardano.PlutusData):
     """The receiver address."""
 
@@ -415,11 +454,53 @@ class Wallet(BaseModel):
 
         return tx
 
+    def _order(
+        self,
+        order_datum: OrderDatum,
+        in_assets: Assets,
+        message: pycardano.AuxiliaryData,
+    ):
+        tx_builder = pycardano.TransactionBuilder(self.context, auxiliary_data=message)
+        tx_builder.add_input_address(self.address.address)
+
+        in_assets.__root__["lovelace"] = (
+            in_assets["lovelace"] + order_datum.batcher_fee + order_datum.deposit
+        )
+        tx_builder.add_output(
+            pycardano.TransactionOutput(
+                address=minswap.addr.STAKE_ORDER.address,
+                amount=asset_to_value(in_assets),
+                datum_hash=order_datum.hash(),
+            ),
+            datum=order_datum,
+            add_datum_to_witness=True,
+        )
+
+        tx_body = tx_builder.build(change_address=self.address.address)
+
+        tx = pycardano.Transaction(
+            tx_body,
+            pycardano.TransactionWitnessSet(
+                vkey_witnesses=[
+                    pycardano.VerificationKeyWitness(
+                        pycardano.txbuilder.FAKE_VKEY,
+                        pycardano.txbuilder.FAKE_TX_SIGNATURE,
+                    )
+                ],
+                plutus_data=[order_datum],
+            ),
+            auxiliary_data=message,
+        )
+        tx = self._build_and_check(tx)
+        tx.transaction_witness_set.vkey_witnesses = []
+
+        return tx
+
     def swap(
         self,
-        pool: Optional[Union[minswap.pools.PoolState, str]],
         in_assets: Optional[Assets] = None,
         out_assets: Optional[Assets] = None,
+        pool: Optional[Union[minswap.pools.PoolState, str]] = None,
         slippage=0.005,
         msg: Optional[str] = None,
     ):
@@ -463,10 +544,10 @@ class Wallet(BaseModel):
         of output to input tokens.
 
         Args:
-            pool: The pool to submit the transaction to. Only needed when submitting
-                swaps other than limit orders. Defaults to None.
             in_assets: The input assets for the swap. Defaults to None.
             out_assets: The output assets for the swap. Defaults to None.
+            pool: The pool to submit the transaction to. Only needed when submitting
+                swaps other than limit orders. Defaults to None.
             slippage: Ratio used to modify either input or output tokens. Not used when
                 both input and output tokens are specified. Defaults to 0.005.
             msg: Optional message to include in the transaction. Defaults to None.
@@ -482,6 +563,8 @@ class Wallet(BaseModel):
         # If both are specified, use a limit order
         if in_assets is not None and out_assets is not None:
             message = self._msg(["Swap: Limit Order"])
+            step = SwapExactIn.from_assets(in_assets)
+
         # If in_assets defined, swap in. If out_assets defined, swap out.
         elif in_assets is not None or out_assets is not None:
             assert pool is not None
@@ -503,7 +586,7 @@ class Wallet(BaseModel):
                 in_assets.__root__[in_assets.unit()] = int(
                     in_assets.__root__[in_assets.unit()] * (1 + slippage)
                 )
-                step = SwapExactOut.from_assets(in_assets)
+                step = SwapExactOut.from_assets(out_assets)
             else:
                 raise ValueError(
                     "Something went wrong. Neither in_assets nor out_assets were set."
@@ -511,41 +594,91 @@ class Wallet(BaseModel):
         else:
             raise ValueError("Either in_assets, out_assets, or both must be defined.")
 
-        tx_builder = pycardano.TransactionBuilder(self.context, auxiliary_data=message)
-        tx_builder.add_input_address(self.address.address)
+        address = PlutusFullAddress.from_address(self.address)
+        order_datum = OrderDatum(address, address, PlutusNone(), step)
+
+        tx = self._order(
+            order_datum=order_datum,
+            in_assets=in_assets,
+            message=message,
+        )
+
+        return tx
+
+    def deposit(
+        self,
+        assets: Assets,
+        pool: Optional[Union[minswap.pools.PoolState, str]] = None,
+        slippage=0.005,
+        msg: Optional[str] = None,
+    ):
+        """Perform a swap on the designated pool.
+
+        This function performs two different tasks based on what inputs are provided:
+        1. ZapIn - When only one asset is supplied, a zap in deposit is executed
+        2. Deposit - When two assets are supplied, a deposit order is created that tries
+            to deposit as many coins as possible.
+
+        Note:
+            Remember, each transaction requires a batcher fee and deposit (where the
+            deposit is returned when the deposit is completed).
+
+        Supplying only one asset will zap in the supplied asset for as much LP as
+        possible. Supplying two assets will deposit as much as possible.
+
+        The slippage argument is a modifier for the requested output LP because things
+        can change a bit between when the order is submitted and when it is executed.
+
+        Args:
+            pool: The pool to submit the transaction to. Only needed when submitting
+                swaps other than limit orders. Defaults to None.
+            in_assets: The input assets for the swap. Defaults to None.
+            out_assets: The output assets for the swap. Defaults to None.
+            slippage: Ratio used to modify either input or output tokens. Not used when
+                both input and output tokens are specified. Defaults to 0.005.
+            msg: Optional message to include in the transaction. Defaults to None.
+
+        Returns:
+            An unsigned transaction.
+        """
+        # If only one asset, perform a zap
+        if pool is None:
+            if len(assets) == 1:
+                # a pool must be supplied
+                raise ValueError(
+                    "When only one asset is supplied, a pool must be specified."
+                )
+            pools = minswap.pools.get_pools()
+            asset_units = list(assets)
+            for p in pools:
+                assert isinstance(p, minswap.pools.PoolState)
+                if p.asset_a in asset_units and p.asset_b in asset_units:
+                    pool = p
+                    break
+
+        elif isinstance(pool, str):
+            pool = minswap.pools.get_pool_by_id(pool)
+
+        # When there's only one asset, perform a zap
+        if len(assets) == 1:
+            assert pool is not None
+            asset_out, _ = pool.get_zap_in_lp(assets)
+            asset_out.__root__[pool.lp_token] = int(
+                asset_out[pool.lp_token] * (1 - slippage)
+            )
+            step = ZapIn.from_assets(asset_out)
+            message = self._msg(["Deposit: Zap in"])
+        else:
+            raise NotImplementedError("Deposit both tokens is not available.")
 
         address = PlutusFullAddress.from_address(self.address)
         order_datum = OrderDatum(address, address, PlutusNone(), step)
-        in_assets.__root__["lovelace"] = (
-            in_assets["lovelace"] + order_datum.batcher_fee + order_datum.deposit
-        )
-        tx_builder.add_output(
-            pycardano.TransactionOutput(
-                address=minswap.addr.STAKE_ORDER.address,
-                amount=asset_to_value(in_assets),
-                datum_hash=order_datum.hash(),
-            ),
-            datum=order_datum,
-            add_datum_to_witness=True,
-        )
 
-        tx_body = tx_builder.build(change_address=self.address.address)
-
-        tx = pycardano.Transaction(
-            tx_body,
-            pycardano.TransactionWitnessSet(
-                vkey_witnesses=[
-                    pycardano.VerificationKeyWitness(
-                        pycardano.txbuilder.FAKE_VKEY,
-                        pycardano.txbuilder.FAKE_TX_SIGNATURE,
-                    )
-                ],
-                plutus_data=[order_datum],
-            ),
-            auxiliary_data=message,
+        tx = self._order(
+            order_datum=order_datum,
+            in_assets=assets,
+            message=message,
         )
-        tx = self._build_and_check(tx)
-        tx.transaction_witness_set.vkey_witnesses = []
 
         return tx
 
