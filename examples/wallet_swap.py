@@ -62,8 +62,8 @@ signed_tx = wallet.sign(tx)
 tx_hash = wallet.submit(signed_tx)
 
 while tx_hash not in [utxo.tx_hash for utxo in wallet.utxos]:
-    print("Consolidated utxo has not been processed, waiting 5 seconds...")
-    time.sleep(5)
+    print("Swap has not been processed, waiting 10 seconds...")
+    time.sleep(10)
 
 print("UTXOs:")
 for utxo in wallet.utxos:

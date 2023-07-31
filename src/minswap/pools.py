@@ -11,14 +11,15 @@ from typing import List, Optional, Tuple, Union
 from pydantic import BaseModel, root_validator
 
 from minswap import addr
-from minswap.assets import get_asset_info, naturalize_assets
-from minswap.models import AddressUtxoContent  # type: ignore[attr-defined]
+from minswap.assets import naturalize_assets
 from minswap.models import (
+    AddressUtxoContent,
     AddressUtxoContentItem,
     AssetIdentity,
     Assets,
     AssetTransaction,
     Output,
+    PoolDatum,
     TxContentUtxo,
 )
 from minswap.utils import BlockfrostBackend
@@ -88,6 +89,8 @@ class PoolState(BaseModel):
     pool_nft: Assets
     minswap_nft: Assets
     datum_hash: str
+    lp_total: int
+    root_k_last: int
 
     class Config:  # noqa: D106
         allow_mutation = False
@@ -96,6 +99,13 @@ class PoolState(BaseModel):
     @root_validator(pre=True)
     def translate_address(cls, values):  # noqa: D102
         assets = values["assets"]
+
+        raw_datum = BlockfrostBackend.api().script_datum(
+            values["datum_hash"], return_type="json"
+        )["json_value"]
+        pool_datum = PoolDatum.from_dict(raw_datum)
+        values["lp_total"] = pool_datum.total_liquidity
+        values["root_k_last"] = pool_datum.root_k_last
 
         # Find the NFT that assigns the pool a unique id
         nfts = [asset for asset in assets if asset.startswith(addr.POOL_NFT_POLICY_ID)]
@@ -308,12 +318,12 @@ class PoolState(BaseModel):
             self.unit_a,
             self.unit_b,
         ], f"Asset {asset.unit} is invalid for pool {self.unit_a}-{self.unit_b}"
-        if asset.unit == self.unit_a:
+        if asset.unit() == self.unit_a:
             reserve_in, reserve_out = self.reserve_a, self.reserve_b
         else:
             reserve_in, reserve_out = self.reserve_b, self.reserve_a
 
-        quantity_in = int(
+        quantity_in = (
             math.sqrt(
                 1997**2 * reserve_in**2
                 + 4 * 997 * 1000 * asset.quantity() * reserve_in
@@ -324,15 +334,15 @@ class PoolState(BaseModel):
 
         asset_out, price_impact = self.get_amount_out(asset_in)
 
-        total_lp = get_asset_info(self.lp_token, update_cache=True)
+        # This number appears to be incorrect
+        # https://github.com/minswap/blockfrost-adapter/pull/7/files#r1279439474
+        total_lp = self.lp_total
 
-        assert total_lp is not None
-
-        quantity_lp = int(asset_out.quantity() * int(total_lp.quantity)) / (
+        quantity_lp = (asset_out.quantity() * total_lp) / (
             reserve_out - asset_out.quantity()
         )
 
-        lp_out = Assets(**{self.lp_token: quantity_lp})
+        lp_out = Assets(**{self.lp_token: int(quantity_lp)})
 
         # TODO: Make sure price impact is correct
         return lp_out, price_impact
@@ -414,9 +424,9 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
 
     out_state = PoolState(
         tx_hash=tx_hash,
-        tx_index=utxo.output_index,
+        tx_index=pool_utxo.output_index,
         assets=pool_utxo.amount,
-        datum_hash=utxo.data_hash,
+        datum_hash=pool_utxo.data_hash,
     )
 
     return out_state

@@ -55,16 +55,16 @@ for utxo in wallet.utxos:
     print(utxo.dict())
     in_asset.__root__[MIN_POLICY] += utxo.amount[MIN_POLICY]
 
-# print()
-# print(f"Swapping {in_asset[MIN_POLICY]} MIN for ADA...")
-# tx = wallet.swap(pool=ADAMIN, in_assets=in_asset)
-# signed_tx = wallet.sign(tx)
-# tx_hash = wallet.submit(signed_tx)
+print()
+print(f"Swapping {in_asset[MIN_POLICY]} MIN for ADA...")
+tx = wallet.swap(pool=ADAMIN, in_assets=in_asset)
+signed_tx = wallet.sign(tx)
+tx_hash = wallet.submit(signed_tx)
 
-# while tx_hash not in [utxo.tx_hash for utxo in wallet.utxos]:
-#     print("Consolidated utxo has not been processed, waiting 5 seconds...")
-#     time.sleep(5)
+while tx_hash not in [utxo.tx_hash for utxo in wallet.utxos]:
+    print("Consolidated utxo has not been processed, waiting 5 seconds...")
+    time.sleep(5)
 
-# print("UTXOs:")
-# for utxo in wallet.utxos:
-#     print(utxo.dict())
+print("UTXOs:")
+for utxo in wallet.utxos:
+    print(utxo.dict())
