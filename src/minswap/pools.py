@@ -3,6 +3,7 @@
 This mostly reflects the pool functionality in the minswap-blockfrostadapter.
 """
 import logging
+import math
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from typing import List, Optional, Tuple, Union
@@ -11,13 +12,14 @@ from pydantic import BaseModel, root_validator
 
 from minswap import addr
 from minswap.assets import naturalize_assets
-from minswap.models import AddressUtxoContent  # type: ignore[attr-defined]
 from minswap.models import (
+    AddressUtxoContent,
     AddressUtxoContentItem,
     AssetIdentity,
     Assets,
     AssetTransaction,
     Output,
+    PoolDatum,
     TxContentUtxo,
 )
 from minswap.utils import BlockfrostBackend
@@ -57,14 +59,14 @@ def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
     # Check to make sure the pool has 1 factory token
     for asset in utxo.amount:
         has_factory: bool = (
-            f"{addr.FACTORY_POLICY_ID}{addr.FACTORY_ASSET_NAME}" == asset.unit
+            f"{addr.FACTORY_POLICY_ID}{addr.FACTORY_ASSET_NAME}" == asset
         )
         if has_factory:
             break
     if not has_factory:
         message = "Pool must have 1 factory token."
         logger.debug(message)
-        logger.debug(f"asset.unit={asset.unit}")
+        logger.debug(f"asset.unit={asset}")
         logger.debug(f"factory={addr.FACTORY_POLICY_ID}{addr.FACTORY_ASSET_NAME}")
         raise InvalidPool(message)
 
@@ -87,6 +89,8 @@ class PoolState(BaseModel):
     pool_nft: Assets
     minswap_nft: Assets
     datum_hash: str
+    lp_total: int
+    root_k_last: int
 
     class Config:  # noqa: D106
         allow_mutation = False
@@ -95,6 +99,13 @@ class PoolState(BaseModel):
     @root_validator(pre=True)
     def translate_address(cls, values):  # noqa: D102
         assets = values["assets"]
+
+        raw_datum = BlockfrostBackend.api().script_datum(
+            values["datum_hash"], return_type="json"
+        )["json_value"]
+        pool_datum = PoolDatum.from_dict(raw_datum)
+        values["lp_total"] = pool_datum.total_liquidity
+        values["root_k_last"] = pool_datum.root_k_last
 
         # Find the NFT that assigns the pool a unique id
         nfts = [asset for asset in assets if asset.startswith(addr.POOL_NFT_POLICY_ID)]
@@ -213,7 +224,7 @@ class PoolState(BaseModel):
         if self.unit_a != "lovelace":
             raise NotImplementedError("tvl for non-ADA pools is not implemented.")
 
-        tvl = (Decimal(self.reserve_a) / Decimal(10**6)).quantize(
+        tvl = 2 * (Decimal(self.reserve_a) / Decimal(10**6)).quantize(
             1 / Decimal(10**6)
         )
 
@@ -230,12 +241,12 @@ class PoolState(BaseModel):
                 and the second value is the price impact ratio.
         """
         assert len(asset) == 1, "Asset should only have one token."
-        assert asset.unit in [
+        assert asset.unit() in [
             self.unit_a,
             self.unit_b,
         ], f"Asset {asset.unit} is invalid for pool {self.unit_a}-{self.unit_b}"
 
-        if asset.unit == self.unit_a:
+        if asset.unit() == self.unit_a:
             reserve_in, reserve_out = self.reserve_a, self.reserve_b
             unit_out = self.unit_b
         else:
@@ -245,7 +256,7 @@ class PoolState(BaseModel):
         # Calculate the amount out
         numerator: int = asset.quantity() * 997 * reserve_out
         denominator: int = asset.quantity() * 997 + reserve_in * 1000
-        amount_out = Assets(unit=unit_out, quantity=numerator // denominator)
+        amount_out = Assets(**{unit_out: numerator // denominator})
 
         # Calculate the price impact
         price_numerator: int = (
@@ -293,6 +304,49 @@ class PoolState(BaseModel):
 
         return amount_in, price_impact
 
+    def get_zap_in_lp(self, asset: Assets) -> Tuple[Assets, float]:
+        """Calculate the estimate LP received for zapping in an amount of asset.
+
+        Args:
+            asset: An asset with a defined quantity.
+
+        Returns:
+            The estimated amount of lp received for the zap in quantity.
+        """
+        assert len(asset) == 1, "Asset should only have one token."
+        assert asset.unit() in [
+            self.unit_a,
+            self.unit_b,
+        ], f"Asset {asset.unit} is invalid for pool {self.unit_a}-{self.unit_b}"
+        if asset.unit() == self.unit_a:
+            reserve_in, reserve_out = self.reserve_a, self.reserve_b
+        else:
+            reserve_in, reserve_out = self.reserve_b, self.reserve_a
+
+        quantity_in = (
+            math.sqrt(
+                1997**2 * reserve_in**2
+                + 4 * 997 * 1000 * asset.quantity() * reserve_in
+            )
+            - 1997 * reserve_in
+        ) / (2 * 997)
+        asset_in = Assets(**{asset.unit(): quantity_in})
+
+        asset_out, price_impact = self.get_amount_out(asset_in)
+
+        # This number appears to be incorrect
+        # https://github.com/minswap/blockfrost-adapter/pull/7/files#r1279439474
+        total_lp = self.lp_total
+
+        quantity_lp = (asset_out.quantity() * total_lp) / (
+            reserve_out - asset_out.quantity()
+        )
+
+        lp_out = Assets(**{self.lp_token: int(quantity_lp)})
+
+        # TODO: Make sure price impact is correct
+        return lp_out, price_impact
+
 
 def get_pools(
     return_non_pools: bool = False,
@@ -332,7 +386,7 @@ def get_pools(
                 PoolState(
                     tx_hash=utxo.tx_hash,
                     tx_index=utxo.output_index,
-                    assets=Assets(values=utxo.amount),
+                    assets=utxo.amount,
                     datum_hash=utxo.data_hash,
                 )
             )
@@ -370,9 +424,9 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
 
     out_state = PoolState(
         tx_hash=tx_hash,
-        tx_index=utxo.output_index,
-        assets=Assets(values=utxo.amount),
-        datum_hash=utxo.data_hash,
+        tx_index=pool_utxo.output_index,
+        assets=pool_utxo.amount,
+        datum_hash=pool_utxo.data_hash,
     )
 
     return out_state

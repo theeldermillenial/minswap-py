@@ -1,4 +1,4 @@
-# minswap-py (v0.2.1)
+# minswap-py (v0.3.0)
 <p align="center">
     <img src="https://img.shields.io/pypi/status/minswap-py?style=flat-square" />
     <img src="https://img.shields.io/pypi/dm/minswap-py?style=flat-square" />
@@ -7,14 +7,72 @@
     <a href="https://github.com/psf/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
 </p>
 
-`minswap-py` is a tool to interact with [Minswap](https://minswap.org/).  The current version has feature parity with the minswap [blockfrost-adapter](https://github.com/minswap/blockfrost-adapter).
+`minswap-py` is a tool to interact with [Minswap](https://minswap.org/).  The current version has feature parity with the minswap [blockfrost-adapter](https://github.com/minswap/sdk), except for the ability to remove liquidity.
 
 Documentation and additional features coming soon.
 
-This tool was recently used to help generate data for the Minswap DAO Emissions and
-Treasury report. You can read the report here:
 
-https://minswap.org/storage/2023/06/31-3-2023_Emissions_and_Treasury_Report.pdf
+## Changelog
+
+Be sure to check out the `CHANGELOG.md` for a complete history of changes. This section
+only contains patch updates for the current minor version.
+
+### 0.3.0
+
+Improvements:
+1. Added wallet support, including easy methods to create a collateral, send funds, and consolidate UTxOs.
+2. Swap transactions.
+3. Cancel transactions.
+4. Deposit liquidity (including zap in), but should be updated in the future. The Minswap team has not responded to requests for details on how to better estimate expected LP based on amount of token deposited.
+https://github.com/minswap/sdk/pull/7#discussion_r1279439474
+
+Changes:
+1. There was an inconsistency in how time values were being cached. See the `examples/rename_time.py` for a way to translate previously cached data to the new standard.
+2. Changed the way some of the underlying classes were managing amounts to use the `Assets` class. This makes combining assets from different UTxOs easier.
+
+### Installation
+
+In order to use this package:
+1. Install with `pip install minswap-py`
+2. Sign up for blockfrost and get an API key.
+3. In your working directory, create a `.env` file. The `.env` should have the following fields:
+```bash
+# The blockfrost project id
+PROJECT_ID=
+
+# The maximum number of calls allowed to Blockfrost within a session.
+MAX_CALLS=45000
+
+# Must be one of mainnet or preprod
+NETWORK=mainnet
+```
+4. Browse the `examples` folder for use cases.
+
+### Setup your wallet
+
+To use a wallet with `minswap-py`, you will need to supply a mnemonic in a file on your
+hard drive. By default, the `Wallet` class will create a brand new wallet and store it
+in `.wallet/{chain}_mnemonic.txt`. Then, this wallet will be used every time a new
+`Wallet` object is created. The `chain` in the file name must either be `mainnet` or
+`preprod` depending on what `NETWORK` you want to operate on (i.e.
+`mainnet_mnemonic.txt` or `preprod_mnemonic.txt`).
+
+If you want to supply your own wallet, you can either replace the mnemonic in
+`.wallets/{chain}_mnemonic.txt` if it exists, or create it. You can also pass the
+mnemonic directly into the `Wallet`. Alternatively, you can create your own `txt` file
+with the mnemonic in it anywhere on disk, and pass that file to the `Wallet`
+constructor.
+
+Examples:
+```python
+from minswap.wallets import Wallet
+
+# Initialize with a path to a file containing a mnemonic
+wallet = Wallet(path="path/to/mnemonic.txt")
+
+# Initialize with a mnemonic
+wallet = Wallet(mnemonic="bert says buy flac")
+```
 
 ## Have a question?
 
@@ -31,31 +89,17 @@ beer in the form of ADA or MIN:
 addr1q9hw8fuex09vr3rqwtn4fzh9qxjlzjzh8aww684ln0rv0cfu3f0de6qkmh7c7yysfz808978wwe6ll30wu8l3cgvgdjqa7egnl
 ```
 
-## Changelog
+## Use Cases
 
-### 0.2.1
+This tool was recently used to help generate data for the Minswap DAO Emissions and
+Treasury report. You can read the report here:
 
-There are now multiple Minswap pool addresses. This patch updates the code to read all of them when using `minswap.get_pools` and subsequent functions that require pool addresses.
+https://minswap.org/storage/2023/06/31-3-2023_Emissions_and_Treasury_Report.pdf
 
-### v0.2.0
+# Contributors
 
-Added CHANGELOG.md :)
+A special thanks to Farmer, creator of Farmbot, for assisting me working through the
+details of swaps and cancel orders. If you would like to learn more about Farmbot,
+check out their discord:
 
-Improvements:
-1. Added a blockfrost rate limiter. Every call to blockfrost adds to a time delayed counter, and prevents running into rate limits. This helps to prevent abuse of the blockfrost API.
-2. Added significant transaction and asset functionality. It is now possible to pull in asset historys.
-
-Changes:
-1. There was an inconsistency in how time values were being cached. See the `examples/rename_time.py` for a way to translate previously cached data to the new standard.
-
-## Quickstart
-
-In order to use this package:
-1. Install with `pip install minswap-py`
-2. Sign up for blockfrost and get an API key.
-3. In your working directory, save a `.env` file. In this file, save your blockfrost API key as follows:
-```bash
-PROJECT_ID=YOUR_BLOCKFROST_ID
-```
-
-Once you do this, you can try out the code in the `examples` folder on the Github repository.
+https://discord.gg/zQHyJKrA7K

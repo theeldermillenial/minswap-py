@@ -4,57 +4,18 @@ This module contains common models used throughout minswap-py as well as utility
 functions for converting data types.
 """
 
-from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import pycardano
-from blockfrost import Namespace
-from pydantic import BaseModel, root_validator
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field, root_validator, validator
 
 from minswap.models import blockfrost_models
 
-
-def to_dict(
-    values: Union[Namespace, List[Any], Dict[str, Any]]
-) -> Union[List[Any], Dict[str, Any]]:
-    """Traverse a dictionary and convert blockfrost.Namespace objects to dictionaries.
-
-    When using `blockfrost.Namespace.to_dict` function to convert a `Namespace` object
-    to a `dict`, child values that are `Namespace` objects are not converted to a
-    `dict`. This function traverse a `Namespace`, `List`, or `Dict` and converts any
-    child values from `Namespace` to `dict`. This is necessary for casting to
-    `pydantic` models for proper error checking and validation.
-
-    Traversel of the input is recursive, ensuring all children are converted.
-
-    Args:
-        values: A `Namespace`, `List`, or `Dict` to be recursively traversed.
-
-    Returns:
-        Union[List[Any], Dict[Any, Any], Dict[str, Any]]
-    """
-    iterator: Optional[Iterable] = None
-
-    if isinstance(values, (Namespace)):
-        values = values.to_dict()
-
-    if isinstance(values, list):
-        iterator = enumerate(values)
-    elif isinstance(values, dict):
-        iterator = values.items()
-
-    if iterator is not None:
-        for k, v in iterator:
-            if isinstance(v, Namespace):
-                values[k] = to_dict(v.to_dict())
-            elif isinstance(v, (list, dict)):
-                values[k] = to_dict(v)
-
-        assert isinstance(values, (list, dict)), f"Error: {values}"
-
-    return values
+load_dotenv()
 
 
 class PoolHistory(BaseModel):
@@ -170,11 +131,11 @@ class Assets(BaseDict):
 
     __root__: Dict[str, int]
 
-    def unit(self, index: int = 0):
+    def unit(self, index: int = 0) -> str:
         """Units of asset at `index`."""
         return list(self.keys())[index]
 
-    def quantity(self, index: int = 0):
+    def quantity(self, index: int = 0) -> int:
         """Quantity of the asset at `index`."""
         return list(self.values())[index]
 
@@ -201,50 +162,12 @@ class Assets(BaseDict):
         return Assets(**result)
 
     def __sub__(a, b):
-        """Add two assets."""
+        """Subtract two assets."""
         intersection = set(a.keys()) | set(b.keys())
 
         result = {key: a[key] - b[key] for key in intersection}
 
         return Assets(**result)
-
-
-class Address(BaseModel):
-    """A Cardano address.
-
-    This class holds Cardano address information, including payment, stake, and script
-    addresses. The input should be the `bech32` encoded address.
-    """
-
-    bech32: str
-    address: pycardano.Address
-    payment: Optional[pycardano.Address]
-    stake: Optional[pycardano.Address]
-
-    class Config:  # noqa: D106
-        arbitrary_types_allowed = True
-
-    @root_validator(pre=True)
-    def translate_address(cls, values):  # noqa: D102
-        assert "bech32" in values
-
-        values["address"] = pycardano.Address.decode(values["bech32"])
-
-        if values["address"].staking_part is not None:
-            values["stake"] = pycardano.Address(
-                staking_part=values["address"].staking_part
-            )
-        else:
-            values["stake"] = None
-
-        if values["address"].payment_part is not None:
-            values["payment"] = pycardano.Address(
-                payment_part=values["address"].payment_part
-            )
-        else:
-            values["payment"] = None
-
-        return values
 
 
 class OnchainMetadata(blockfrost_models.AssetOnchainMetadataCip25):
@@ -306,6 +229,26 @@ class AssetIdentity(blockfrost_models.Asset1):
 class AddressUtxoContentItem(blockfrost_models.AddressUtxoContentItem):
     """An address UTxO item."""
 
+    amount: Assets
+
+    @validator("amount", pre=True)
+    def _to_assets(cls, value):
+        if isinstance(value, list):
+            return Assets(**{i["unit"]: i["quantity"] for i in value})
+        else:
+            return value
+
+    def to_utxo(self) -> pycardano.UTxO:
+        """Convert to a pycardano UTxO object."""
+        inp = pycardano.TransactionInput.from_primitive([self.tx_hash, self.tx_index])
+        address = pycardano.Address.decode(self.address)
+        amount = asset_to_value(self.amount)
+        out = pycardano.TransactionOutput(
+            address=address, amount=amount, datum_hash=self.data_hash
+        )
+
+        return pycardano.UTxO(inp, out)
+
 
 class AddressUtxoContent(blockfrost_models.AddressUtxoContent, BaseList):
     """An address UTxO list of items."""
@@ -320,10 +263,330 @@ class AddressUtxoContent(blockfrost_models.AddressUtxoContent, BaseList):
 class Input(blockfrost_models.Input):
     """An input to a transaction."""
 
+    amount: Assets = Field(
+        ...,
+        example=[
+            {"unit": "lovelace", "quantity": "42000000"},
+            {
+                "unit": "b0d07d45fe9514f80213f4020e5a61241458be626841cde717cb38a76e7574636f696e",  # noqa
+                "quantity": "12",
+            },
+        ],
+    )
+
+    @validator("amount", pre=True)
+    def _to_assets(cls, value):
+        if isinstance(value, list):
+            return Assets(**{i["unit"]: i["quantity"] for i in value})
+        else:
+            return value
+
 
 class Output(blockfrost_models.Output):
     """An output to a transaction."""
 
+    amount: Assets = Field(
+        ...,
+        example=[
+            {"unit": "lovelace", "quantity": "42000000"},
+            {
+                "unit": "b0d07d45fe9514f80213f4020e5a61241458be626841cde717cb38a76e7574636f696e",  # noqa
+                "quantity": "12",
+            },
+        ],
+    )
+
+    @validator("amount", pre=True)
+    def _to_assets(cls, value):
+        if isinstance(value, list):
+            return Assets(**{i["unit"]: i["quantity"] for i in value})
+        else:
+            return value
+
 
 class TxContentUtxo(blockfrost_models.TxContentUtxo):
     """A Transaction, containing all inputs and outputs."""
+
+    inputs: List[Input]
+    outputs: List[Output]
+
+
+class Address(BaseModel):
+    """A Cardano address.
+
+    This class holds Cardano address information, including payment, stake, and script
+    addresses. The input should be the `bech32` encoded address.
+    """
+
+    bech32: str
+    address: pycardano.Address
+    payment: Optional[pycardano.Address]
+    stake: Optional[pycardano.Address]
+
+    class Config:  # noqa: D106
+        arbitrary_types_allowed = True
+
+    @root_validator(pre=True)
+    def translate_address(cls, values):  # noqa: D102
+        assert "bech32" in values
+
+        values["address"] = pycardano.Address.decode(values["bech32"])
+
+        if values["address"].staking_part is not None:
+            values["stake"] = pycardano.Address(
+                staking_part=values["address"].staking_part
+            )
+        else:
+            values["stake"] = None
+
+        if values["address"].payment_part is not None:
+            values["payment"] = pycardano.Address(
+                payment_part=values["address"].payment_part
+            )
+        else:
+            values["payment"] = None
+
+        return values
+
+
+ORDER_SCRIPT: pycardano.PlutusV1Script = pycardano.PlutusV1Script(
+    bytes.fromhex(
+        "59014c01000032323232323232322223232325333009300e30070021323233533300b33"
+        + "70e9000180480109118011bae30100031225001232533300d3300e22533301300114a02a666"
+        + "01e66ebcc04800400c5288980118070009bac3010300c300c300c300c300c300c300c007149"
+        + "858dd48008b18060009baa300c300b3754601860166ea80184ccccc0288894ccc0400044008"
+        + "4c8c94ccc038cd4ccc038c04cc030008488c008dd718098018912800919b8f0014891ce1317"
+        + "b152faac13426e6a83e06ff88a4d62cce3c1634ab0a5ec133090014a0266008444a00226600"
+        + "a446004602600a601a00626600a008601a006601e0026ea8c03cc038dd5180798071baa300f"
+        + "300b300e3754601e00244a0026eb0c03000c92616300a001375400660106ea8c024c020dd50"
+        + "00aab9d5744ae688c8c0088cc0080080048c0088cc00800800555cf2ba15573e6e1d200201"
+    )
+)
+
+BATCHER_FEE = 2000000
+DEPOSIT = 2000000
+
+
+@dataclass
+class PlutusPartAddress(pycardano.PlutusData):
+    """Encode a plutus address part (i.e. payment, stake, etc)."""
+
+    CONSTR_ID = 0
+    address: bytes
+
+
+@dataclass
+class PlutusNone(pycardano.PlutusData):
+    """Placeholder for a receiver datum."""
+
+    CONSTR_ID = 1
+
+
+@dataclass
+class _PlutusConstrWrapper(pycardano.PlutusData):
+    """Hidden wrapper to match Minswap stake address constructs."""
+
+    CONSTR_ID = 0
+    wrapped: Union["_PlutusConstrWrapper", PlutusPartAddress]
+
+
+@dataclass
+class PlutusFullAddress(pycardano.PlutusData):
+    """A full address, including payment and staking keys."""
+
+    CONSTR_ID = 0
+    payment: PlutusPartAddress
+    stake: _PlutusConstrWrapper
+
+    @classmethod
+    def from_address(cls, address: Address):
+        """Parse an Address object to a PlutusFullAddress."""
+        assert address.stake is not None
+        assert address.payment is not None
+        stake = _PlutusConstrWrapper(
+            _PlutusConstrWrapper(
+                PlutusPartAddress(bytes.fromhex(str(address.stake.staking_part)))
+            )
+        )
+        return PlutusFullAddress(
+            PlutusPartAddress(bytes.fromhex(str(address.payment.payment_part))),
+            stake=stake,
+        )
+
+
+@dataclass
+class AssetClass(pycardano.PlutusData):
+    """An asset class. Separates out token policy and asset name."""
+
+    policy: bytes
+    asset_name: bytes
+
+    @classmethod
+    def from_assets(cls, asset: Assets):
+        """Parse an Assets object into an AssetClass object."""
+        assert len(asset) == 1
+
+        if asset.unit() == "lovelace":
+            return AssetClass(
+                policy=b"",
+                asset_name=b"",
+            )
+        else:
+            return AssetClass(
+                policy=bytes.fromhex(asset.unit()[:56]),
+                asset_name=bytes.fromhex(asset.unit()[56:]),
+            )
+
+
+def asset_to_value(assets: Assets) -> pycardano.Value:
+    """Convert an Assets object to a pycardano.Value."""
+    coin = assets["lovelace"]
+    cnts = {}
+    for unit, quantity in assets.items():
+        if unit == "lovelace":
+            continue
+        policy = bytes.fromhex(unit[:56])
+        asset_name = bytes.fromhex(unit[56:])
+        if policy not in cnts:
+            cnts[policy] = {asset_name: quantity}
+        else:
+            cnts[policy][asset_name] = quantity
+
+    if len(cnts) == 0:
+        return pycardano.Value.from_primitive([coin])
+    else:
+        return pycardano.Value.from_primitive([coin, cnts])
+
+
+@dataclass
+class SwapExactIn(pycardano.PlutusData):
+    """Swap exact in order datum."""
+
+    CONSTR_ID = 0
+    desired_coin: AssetClass
+    minimum_receive: int
+
+    @classmethod
+    def from_assets(cls, asset: Assets):
+        """Parse an Assets object into a SwapExactIn datum."""
+        assert len(asset) == 1
+
+        return SwapExactIn(
+            desired_coin=AssetClass.from_assets(asset), minimum_receive=asset.quantity()
+        )
+
+
+@dataclass
+class SwapExactOut(pycardano.PlutusData):
+    """Swap exact out order datum."""
+
+    CONSTR_ID = 1
+    desired_coin: AssetClass
+    expected_receive: int
+
+    @classmethod
+    def from_assets(cls, asset: Assets):
+        """Parse an Assets object into a SwapExactOut datum."""
+        assert len(asset) == 1
+
+        return SwapExactOut(
+            desired_coin=AssetClass.from_assets(asset),
+            expected_receive=asset.quantity(),
+        )
+
+
+@dataclass
+class Deposit(pycardano.PlutusData):
+    """Swap exact out order datum."""
+
+    CONSTR_ID = 2
+    minimum_lp: int
+
+
+@dataclass
+class Withdraw(pycardano.PlutusData):
+    """Swap exact out order datum."""
+
+    CONSTR_ID = 3
+    minimum_asset_a: int
+    minimum_asset_b: int
+
+
+@dataclass
+class ZapIn(pycardano.PlutusData):
+    """Swap exact out order datum."""
+
+    CONSTR_ID = 4
+    desired_coin: AssetClass
+    minimum_receive: int
+
+    @classmethod
+    def from_assets(cls, asset: Assets):
+        """Parse an Assets object into a SwapExactOut datum."""
+        assert len(asset) == 1
+
+        return ZapIn(
+            desired_coin=AssetClass.from_assets(asset),
+            minimum_receive=asset.quantity(),
+        )
+
+
+@dataclass
+class ReceiverDatum(pycardano.PlutusData):
+    """The receiver address."""
+
+    CONSTR_ID = 1
+    datum_hash: Optional[pycardano.DatumHash]
+
+
+@dataclass
+class OrderDatum(pycardano.PlutusData):
+    """An order datum."""
+
+    sender: PlutusFullAddress
+    receiver: PlutusFullAddress
+    receiver_datum_hash: Union[pycardano.DatumHash, PlutusNone]
+    step: Union[SwapExactIn, SwapExactOut]
+    batcher_fee: int = BATCHER_FEE
+    deposit: int = DEPOSIT
+
+
+@dataclass
+class FeeDatumHash(pycardano.PlutusData):
+    """Fee datum hash."""
+
+    CONSTR_ID = 0
+    fee_hash: str
+
+
+@dataclass
+class FeeSwitchOn(pycardano.PlutusData):
+    """Pool Fee Sharing On."""
+
+    CONSTR_ID = 0
+    fee_to: PlutusFullAddress
+    fee_to_datum_hash: Union[PlutusNone, FeeDatumHash]
+
+
+@dataclass
+class _EmptyFeeSwitchWrapper(pycardano.PlutusData):
+    CONSTR_ID = 0
+    fee_sharing: Union[FeeSwitchOn, PlutusNone]
+
+
+@dataclass
+class PoolDatum(pycardano.PlutusData):
+    """Pool Datum."""
+
+    asset_a: AssetClass
+    asset_b: AssetClass
+    total_liquidity: int
+    root_k_last: int
+    fee_sharing: _EmptyFeeSwitchWrapper
+
+
+@dataclass
+class CancelRedeemer(pycardano.PlutusData):
+    """Cancel datum."""
+
+    CONSTR_ID = 1
