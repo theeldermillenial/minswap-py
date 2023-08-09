@@ -33,36 +33,33 @@ for utxo in wallet.utxos:
     print(utxo.dict())
 
 print()
-print(f"Swapping 50 ADA for MIN...")
+print(f"Swapping 50 ADA for 50 MIN...")
 in_asset = Assets(lovelace=50000000)
-tx = wallet.swap(pool=ADAMIN, in_assets=in_asset)
+out_asset = Assets(**{adamin_pool.unit_b: 50000000})
+tx = wallet.swap(pool=ADAMIN, in_assets=in_asset, out_assets=out_asset)
 signed_tx = wallet.sign(tx)
 order = wallet.submit(signed_tx)
 
-while str(order.transaction.id) not in [utxo.tx_hash for utxo in wallet.utxos]:
+utxos = [utxo.tx_hash for utxo in wallet.utxos]
+while str(order.transaction.id) not in utxos:
+    print(utxos)
     print("Waiting for transaction to be processed, waiting 10 seconds...")
     time.sleep(10)
-
-"""Need to add a pause, or method to wait for swap to complete. For now, just wait."""
-print()
-print("Pausing for 60 seconds to wait for transaction to complete...")
-time.sleep(60)
+    utxos = [utxo.tx_hash for utxo in wallet.utxos]
 
 print()
 print("UTXOs:")
-in_asset = Assets(**{MIN_POLICY: 0})
 for utxo in wallet.utxos:
     print(utxo.dict())
-    in_asset.__root__[MIN_POLICY] += utxo.amount[MIN_POLICY]
 
 print()
-print(f"Swapping {in_asset[MIN_POLICY]} MIN for ADA...")
-tx = wallet.swap(pool=ADAMIN, in_assets=in_asset)
+print(f"Cancelling swap...")
+tx = wallet.cancel(order=order)
 signed_tx = wallet.sign(tx)
-order = wallet.submit(signed_tx)
+tx_hash = wallet.submit(signed_tx)
 
-while str(order.transaction.id) not in [utxo.tx_hash for utxo in wallet.utxos]:
-    print("Swap has not been processed, waiting 10 seconds...")
+while str(tx_hash.transaction.id) not in [utxo.tx_hash for utxo in wallet.utxos]:
+    print("Cancel has not been processed, waiting 10 seconds...")
     time.sleep(10)
 
 print("UTXOs:")

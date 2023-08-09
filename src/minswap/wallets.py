@@ -1,5 +1,6 @@
 """Methods for wallets including building, signing, and submitting transactions."""
 import os
+from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -8,21 +9,120 @@ import pycardano
 from pydantic import BaseModel, Field, root_validator
 
 import minswap.addr
+import minswap.models.blockfrost_models
 import minswap.pools
 import minswap.utils
 from minswap.models import (
+    ORDER_SCRIPT,
     Address,
     AddressUtxoContent,
     AddressUtxoContentItem,
     Assets,
+    CancelRedeemer,
     OrderDatum,
     PlutusFullAddress,
     PlutusNone,
     SwapExactIn,
     SwapExactOut,
+    Transaction,
+    TxContentUtxo,
     ZapIn,
     asset_to_value,
 )
+
+
+class OrderStatus(Enum):
+    """Status of an order."""
+
+    QUEUED = 0
+    SUBMITTED = 1
+    COMPLETED = 2
+
+
+class InvalidOrderTx(Exception):
+    """The transaction is not an order."""
+
+    message: str = "The transaction is not an order or could not be found."
+
+
+class InvalidCompleteTx(Exception):
+    """The transaction is not an order."""
+
+    message: str = (
+        "The transaction is not the completion order. "
+        + " The order does not have correct order datum hash."
+    )
+
+
+class CompletedOrder(Exception):
+    """The transaction is not an order."""
+
+    message: str = "The transaction is not an order."
+
+
+class Order(BaseModel):
+    """An order handler."""
+
+    transaction: pycardano.Transaction
+    submitted_tx: Optional[TxContentUtxo] = None
+    completed_tx: Optional[TxContentUtxo] = None
+
+    class Config:  # noqa
+        arbitrary_types_allowed = True
+
+    @property
+    def status(self) -> OrderStatus:
+        """Status of an order."""
+        if self.completed_tx is not None:
+            return OrderStatus.COMPLETED
+
+        elif self.submitted_tx is not None:
+            return OrderStatus.SUBMITTED
+
+        else:
+            return OrderStatus.QUEUED
+
+    def status_update(self, tx: Optional[Union[Transaction, TxContentUtxo]] = None):
+        """Update and return the status."""
+        if tx is not None:
+            if isinstance(tx, Transaction):
+                raw_tx = minswap.utils.BlockfrostBackend.api().transaction_utxos(
+                    tx.hash, return_type="json"
+                )
+                tx = TxContentUtxo.parse_obj(raw_tx)
+
+            if not isinstance(tx, TxContentUtxo):
+                raise InvalidOrderTx
+
+            if tx.hash == self.submitted_tx:
+                self.queued_tx = tx
+            else:
+                if not any(self.data_hash == inp.data_hash for inp in tx.inputs):
+                    raise InvalidCompleteTx(
+                        "The supplied transaction is not the completion of this order."
+                    )
+
+                self.completed_tx = tx
+
+        elif self.submitted_tx is None:
+            try:
+                raw_tx = minswap.utils.BlockfrostBackend.api().transaction_utxos(
+                    str(self.transaction.id), return_type="json"
+                )
+                self.submitted_tx = TxContentUtxo.parse_obj(raw_tx)
+            except blockfrost.ApiError as e:
+                if e.status_code == 404:
+                    raise InvalidOrderTx(
+                        f"Could not find order: {str(self.transaction.id)}"
+                    )
+                else:
+                    raise
+
+        return self.status
+
+    def cancel_datum(self):
+        """Create the cancel redeemer."""
+        return pycardano.Redeemer(CancelRedeemer())
 
 
 class Wallet(BaseModel):
@@ -119,6 +219,61 @@ class Wallet(BaseModel):
 
         return None
 
+    @property
+    def tx_path(self) -> Path:
+        """A default path for saving transactions.
+
+        The default path uses the cbor hex encoded address to create a hierarchical
+        folder structure. This is useful in applications where many wallets are used
+        to prevent too many files/folders collecting in a single director.
+        """
+        address_cbor = self.address.address.to_cbor_hex()
+        path = (
+            Path(".tx")
+            .joinpath(address_cbor[:2])
+            .joinpath(address_cbor[2:4])
+            .joinpath(address_cbor[4:10])
+        )
+        path.mkdir(parents=True, exist_ok=True)
+
+        return path
+
+    # def open_orders(self) -> List[Tuple[pycardano.Redeemer, Order]]:
+    #     """Find orders that have not been completed."""
+    #     redeemers = minswap.utils.BlockfrostBackend.api().script(
+    #         str(minswap.addr.STAKE_ORDER.payment.payment_part),  # type: ignore
+    #         return_type="json",
+    #     )
+
+    #     past_orders: Dict[str, Order] = {}
+    #     for tx in self.tx_path.iterdir():
+    #         with open(tx, "rb") as fr:
+    #             transaction = pycardano.Transaction.from_cbor(fr.read())
+    #         assert isinstance(transaction, pycardano.Transaction)
+    #         for output in transaction.transaction_body.outputs:
+    #             if output.address.encode() != minswap.addr.STAKE_ORDER.bech32:
+    #                 continue
+    #             elif output.datum_hash is not None:
+    #                 past_orders[output.datum_hash] = transaction
+    #                 break
+    #             elif output.datum is not None:
+    #                 past_orders[pycardano.datum_hash(output.datum)] = transaction
+    #                 break
+
+    #     open_orders: List[Tuple[pycardano.Redeemer, Order]] = []
+    #     redeemers = sorted(redeemers, key=lambda x: x["tx_hash"])
+    #     import pprint
+
+    #     pprint.pprint(redeemers)
+    #     quit()
+    #     for redeemer in redeemers:
+    #         if redeemer["datum_hash"] in past_orders:
+    #             print(redeemer["tx_hash"])
+    #             open_orders.append((redeemer, Order(transaction=transaction)))
+
+    #     quit()
+    #     return open_orders
+
     def make_collateral_tx(self):
         """Create a collateral creation transaction."""
         return self.send_tx(
@@ -199,13 +354,13 @@ class Wallet(BaseModel):
         influence the fee itself, this recursively calculates the fee until the fee
         settles on the lowest possible fee.
         """
-        fee = self._fee(tx.to_cbor("bytes"))
+        fee = self._fee(tx.to_cbor())
         tx_body = tx.transaction_body
         while fee != tx.transaction_body.fee:
             tx_body.outputs[-1].amount.coin += tx_body.fee
             tx_body.fee = fee
             tx_body.outputs[-1].amount.coin -= tx_body.fee
-            fee = self._fee(tx.to_cbor("bytes"))
+            fee = self._fee(tx.to_cbor())
 
         return tx
 
@@ -282,23 +437,7 @@ class Wallet(BaseModel):
             add_datum_to_witness=True,
         )
 
-        tx_body = tx_builder.build(change_address=self.address.address)
-
-        tx = pycardano.Transaction(
-            tx_body,
-            pycardano.TransactionWitnessSet(
-                vkey_witnesses=[
-                    pycardano.VerificationKeyWitness(
-                        pycardano.txbuilder.FAKE_VKEY,
-                        pycardano.txbuilder.FAKE_TX_SIGNATURE,
-                    )
-                ],
-                plutus_data=[order_datum],
-            ),
-            auxiliary_data=message,
-        )
-        tx = self._build_and_check(tx)
-        tx.transaction_witness_set.vkey_witnesses = []
+        tx = tx_builder.build_and_sign([], change_address=self.address.address)
 
         return tx
 
@@ -488,6 +627,48 @@ class Wallet(BaseModel):
 
         return tx
 
+    def cancel(
+        self, order: Order, msg: Optional[str] = None
+    ) -> Optional[pycardano.Transaction]:
+        """Cancel an order."""
+        assert order.status_update() == OrderStatus.SUBMITTED
+
+        message = self._msg(["Cancel order", msg])
+
+        tx_builder = pycardano.TransactionBuilder(
+            self.context,
+            auxiliary_data=message,
+            required_signers=[self.payment_verification_key.hash()],
+        )
+        for output in order.transaction.transaction_body.outputs:
+            if output.address.encode() == minswap.addr.STAKE_ORDER.address.encode():
+                if output.datum_hash is None:
+                    output.datum_hash = pycardano.datum_hash(output.datum)
+                t_in = pycardano.TransactionInput(order.transaction.id, 0)
+                amount = pycardano.Value(output.amount.coin, output.amount.multi_asset)
+                t_out = pycardano.TransactionOutput(
+                    output.address, amount, datum_hash=output.datum_hash
+                )
+                utxo = pycardano.UTxO(input=t_in, output=t_out)
+                tx_builder.add_script_input(
+                    utxo=utxo,
+                    script=ORDER_SCRIPT,
+                    datum=order.transaction.transaction_witness_set.plutus_data[0],
+                    redeemer=order.cancel_datum(),
+                )
+
+        if self.collateral is None:
+            raise ValueError("No UTxOs available for collateral.")
+        tx_builder.excluded_inputs.append(self.collateral.to_utxo())
+        tx_builder.collaterals.append(self.collateral.to_utxo())
+
+        tx = tx_builder.build_and_sign(
+            signing_keys=[],
+            change_address=self.address.address,
+        )
+
+        return tx
+
     def sign(self, tx: pycardano.Transaction):
         """Sign a transaction."""
         signature = self.payment_signing_key.sign(tx.transaction_body.hash())
@@ -498,15 +679,22 @@ class Wallet(BaseModel):
 
         return tx
 
-    def submit(self, tx: pycardano.Transaction):
+    def submit(self, tx: pycardano.Transaction, path: Optional[Path] = None) -> Order:
         """Submit a transaction."""
-        path = Path(".tx").joinpath(str(tx.id) + ".cbor")
-        path.parent.mkdir(exist_ok=True)
+        if path is None:
+            path = self.tx_path
+        path = path.joinpath(str(tx.id) + ".cbor")
         with open(path, "wb") as fw:
-            fw.write(tx.to_cbor(encoding="bytes"))
+            fw.write(tx.to_cbor())
 
-        response = minswap.utils.BlockfrostBackend.api().transaction_submit(
-            str(path), return_type="json"
-        )
+        try:
+            minswap.utils.BlockfrostBackend.api().transaction_submit(
+                str(path), return_type="json"
+            )
+        except Exception:
+            path.unlink()
+            raise
 
-        return response
+        order = Order(transaction=tx)
+
+        return order

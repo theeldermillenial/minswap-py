@@ -238,6 +238,17 @@ class AddressUtxoContentItem(blockfrost_models.AddressUtxoContentItem):
         else:
             return value
 
+    def to_utxo(self) -> pycardano.UTxO:
+        """Convert to a pycardano UTxO object."""
+        inp = pycardano.TransactionInput.from_primitive([self.tx_hash, self.tx_index])
+        address = pycardano.Address.decode(self.address)
+        amount = asset_to_value(self.amount)
+        out = pycardano.TransactionOutput(
+            address=address, amount=amount, datum_hash=self.data_hash
+        )
+
+        return pycardano.UTxO(inp, out)
+
 
 class AddressUtxoContent(blockfrost_models.AddressUtxoContent, BaseList):
     """An address UTxO list of items."""
@@ -338,9 +349,9 @@ class Address(BaseModel):
         return values
 
 
-ORDER_SCRIPT = pycardano.PlutusV1Script(
+ORDER_SCRIPT: pycardano.PlutusV1Script = pycardano.PlutusV1Script(
     bytes.fromhex(
-        "59014f59014c01000032323232323232322223232325333009300e30070021323233533300b33"
+        "59014c01000032323232323232322223232325333009300e30070021323233533300b33"
         + "70e9000180480109118011bae30100031225001232533300d3300e22533301300114a02a666"
         + "01e66ebcc04800400c5288980118070009bac3010300c300c300c300c300c300c300c007149"
         + "858dd48008b18060009baa300c300b3754601860166ea80184ccccc0288894ccc0400044008"
@@ -351,7 +362,6 @@ ORDER_SCRIPT = pycardano.PlutusV1Script(
         + "00aab9d5744ae688c8c0088cc0080080048c0088cc00800800555cf2ba15573e6e1d200201"
     )
 )
-
 
 BATCHER_FEE = 2000000
 DEPOSIT = 2000000
@@ -535,7 +545,7 @@ class OrderDatum(pycardano.PlutusData):
 
     sender: PlutusFullAddress
     receiver: PlutusFullAddress
-    receiver_datum_hash: Optional[pycardano.DatumHash]
+    receiver_datum_hash: Union[pycardano.DatumHash, PlutusNone]
     step: Union[SwapExactIn, SwapExactOut]
     batcher_fee: int = BATCHER_FEE
     deposit: int = DEPOSIT
@@ -573,3 +583,10 @@ class PoolDatum(pycardano.PlutusData):
     total_liquidity: int
     root_k_last: int
     fee_sharing: _EmptyFeeSwitchWrapper
+
+
+@dataclass
+class CancelRedeemer(pycardano.PlutusData):
+    """Cancel datum."""
+
+    CONSTR_ID = 1
