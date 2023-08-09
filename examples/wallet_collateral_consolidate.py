@@ -30,11 +30,11 @@ if collateral is None:
 
 print()
 print("Consolidating UTXOs (including collateral)")
-tx = wallet.consolidate_utxos_tx(ignore_collateral=False)
+tx = wallet.consolidate_utxos_tx()
 signed_tx = wallet.sign(tx)
-tx_hash = wallet.submit(signed_tx)
+order = wallet.submit(signed_tx)
 
-while tx_hash not in [utxo.tx_hash for utxo in wallet.utxos]:
+while str(order.transaction.id) not in [utxo.tx_hash for utxo in wallet.utxos]:
     print("Consolidated utxo has not been processed, waiting 5 seconds...")
     time.sleep(5)
 

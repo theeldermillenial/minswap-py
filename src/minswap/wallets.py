@@ -238,49 +238,13 @@ class Wallet(BaseModel):
 
         return path
 
-    # def open_orders(self) -> List[Tuple[pycardano.Redeemer, Order]]:
-    #     """Find orders that have not been completed."""
-    #     redeemers = minswap.utils.BlockfrostBackend.api().script(
-    #         str(minswap.addr.STAKE_ORDER.payment.payment_part),  # type: ignore
-    #         return_type="json",
-    #     )
-
-    #     past_orders: Dict[str, Order] = {}
-    #     for tx in self.tx_path.iterdir():
-    #         with open(tx, "rb") as fr:
-    #             transaction = pycardano.Transaction.from_cbor(fr.read())
-    #         assert isinstance(transaction, pycardano.Transaction)
-    #         for output in transaction.transaction_body.outputs:
-    #             if output.address.encode() != minswap.addr.STAKE_ORDER.bech32:
-    #                 continue
-    #             elif output.datum_hash is not None:
-    #                 past_orders[output.datum_hash] = transaction
-    #                 break
-    #             elif output.datum is not None:
-    #                 past_orders[pycardano.datum_hash(output.datum)] = transaction
-    #                 break
-
-    #     open_orders: List[Tuple[pycardano.Redeemer, Order]] = []
-    #     redeemers = sorted(redeemers, key=lambda x: x["tx_hash"])
-    #     import pprint
-
-    #     pprint.pprint(redeemers)
-    #     quit()
-    #     for redeemer in redeemers:
-    #         if redeemer["datum_hash"] in past_orders:
-    #             print(redeemer["tx_hash"])
-    #             open_orders.append((redeemer, Order(transaction=transaction)))
-
-    #     quit()
-    #     return open_orders
-
     def make_collateral_tx(self):
         """Create a collateral creation transaction."""
         return self.send_tx(
             self.address, Assets(lovelace="5000000"), "Create Collateral."
         )
 
-    def consolidate_utxos_tx(self, ignore_collateral=True):
+    def consolidate_utxos_tx(self):
         """Create a UTXO collection tx.
 
         To help keep a tidy wallet, it is useful to send all UTXOs to the same address
@@ -295,30 +259,25 @@ class Wallet(BaseModel):
         Args:
             ignore_collateral: Ignore collateral when consolidating. Defaults to True.
         """
+        message = self._msg(["Consolidate UTxOs"])
+
+        tx_builder = pycardano.TransactionBuilder(self.context, auxiliary_data=message)
+        tx_builder.add_input_address(self.address.address)
         collateral = self.collateral
-        ignore_collateral = ignore_collateral & (collateral is not None)
-        consolidated = Assets()
         for utxo in self.utxos:
+            assert isinstance(utxo, AddressUtxoContentItem)
             if (
-                ignore_collateral
-                and utxo.tx_hash == collateral.tx_hash
-                and utxo.output_index == collateral.output_index
+                collateral is not None
+                and collateral.tx_hash == utxo.tx_hash
+                and collateral.tx_index == utxo.tx_index
             ):
                 continue
-            consolidated += utxo.amount
-        tx = self.send_tx(
-            self.address,
-            consolidated,
-            "Consolidate UTxOs.",
-            ignore_collateral=ignore_collateral,
-        )
-        last_output = tx.transaction_body.outputs.pop()
-        tx.transaction_body.outputs[0].amount.coin += last_output.amount.coin
-        tx.transaction_witness_set = pycardano.TransactionWitnessSet(
-            pycardano.txbuilder.FAKE_VKEY, pycardano.txbuilder.FAKE_TX_SIGNATURE
-        )
-        tx = self._build_and_check(tx)
-        tx.transaction_witness_set = pycardano.TransactionWitnessSet()
+            tx_builder.add_input(utxo.to_utxo())
+
+        if self.collateral is not None:
+            tx_builder.excluded_inputs.append(self.collateral.to_utxo())
+
+        tx = tx_builder.build_and_sign([], change_address=self.address.address)
 
         return tx
 
@@ -396,22 +355,10 @@ class Wallet(BaseModel):
             pycardano.TransactionOutput(address.address, amount["lovelace"])
         )
 
-        tx_body = tx_builder.build(change_address=self.address.address)
+        if self.collateral is not None:
+            tx_builder.excluded_inputs.append(self.collateral.to_utxo())
 
-        tx = pycardano.Transaction(
-            tx_body,
-            pycardano.TransactionWitnessSet(
-                vkey_witnesses=[
-                    pycardano.VerificationKeyWitness(
-                        pycardano.txbuilder.FAKE_VKEY,
-                        pycardano.txbuilder.FAKE_TX_SIGNATURE,
-                    )
-                ],
-            ),
-            auxiliary_data=message,
-        )
-        tx = self._build_and_check(tx)
-        tx.transaction_witness_set.vkey_witnesses = []
+        tx = tx_builder.build_and_sign([], change_address=self.address.address)
 
         return tx
 
@@ -436,6 +383,8 @@ class Wallet(BaseModel):
             datum=order_datum,
             add_datum_to_witness=True,
         )
+        if self.collateral is not None:
+            tx_builder.excluded_inputs.append(self.collateral.to_utxo())
 
         tx = tx_builder.build_and_sign([], change_address=self.address.address)
 
