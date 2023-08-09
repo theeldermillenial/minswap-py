@@ -19,15 +19,11 @@ only contains patch updates for the current minor version.
 
 ### 0.3.0
 
-There are now multiple Minswap pool addresses. This patch updates the code to read all of them when using `minswap.get_pools` and subsequent functions that require pool addresses.
-
 Improvements:
-1. Added a blockfrost rate limiter. Every call to blockfrost adds to a time delayed counter, and prevents running into rate limits. This helps to prevent abuse of the blockfrost API.
-2. Added significant transaction and asset functionality. It is now possible to pull in asset historys.
-3. Added wallet support, including easy methods to create a collateral, send funds, and consolidate UTxOs.
-4. Swap transactions.
-5. Cancel transactions.
-6. Deposit liquidity (including zap in), but should be updated in the future. The Minswap team has not responded to requests for details on how to better estimate expected LP based on amount of token deposited.
+1. Added wallet support, including easy methods to create a collateral, send funds, and consolidate UTxOs.
+2. Swap transactions.
+3. Cancel transactions.
+4. Deposit liquidity (including zap in), but should be updated in the future. The Minswap team has not responded to requests for details on how to better estimate expected LP based on amount of token deposited.
 https://github.com/minswap/sdk/pull/7#discussion_r1279439474
 
 Changes:
