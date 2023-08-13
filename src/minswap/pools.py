@@ -89,8 +89,9 @@ class PoolState(BaseModel):
     pool_nft: Assets
     minswap_nft: Assets
     datum_hash: str
-    lp_total: int
-    root_k_last: int
+    raw_datum: Optional[str]
+    raw_lp_total: Optional[int]
+    raw_root_k_last: Optional[int]
 
     class Config:  # noqa: D106
         allow_mutation = False
@@ -99,13 +100,6 @@ class PoolState(BaseModel):
     @root_validator(pre=True)
     def translate_address(cls, values):  # noqa: D102
         assets = values["assets"]
-
-        raw_datum = BlockfrostBackend.api().script_datum(
-            values["datum_hash"], return_type="json"
-        )["json_value"]
-        pool_datum = PoolDatum.from_dict(raw_datum)
-        values["lp_total"] = pool_datum.total_liquidity
-        values["root_k_last"] = pool_datum.root_k_last
 
         # Find the NFT that assigns the pool a unique id
         nfts = [asset for asset in assets if asset.startswith(addr.POOL_NFT_POLICY_ID)]
@@ -229,6 +223,32 @@ class PoolState(BaseModel):
         )
 
         return tvl
+
+    @property
+    def pool_datum(self) -> PoolDatum:
+        """The pool state datum."""
+        if not self.raw_datum:
+            self.raw_datum = BlockfrostBackend.api().script_datum(
+                self.datum_hash, return_type="json"
+            )["json_value"]
+
+        return PoolDatum.from_dict(self.raw_datum)
+
+    @property
+    def lp_total(self) -> int:
+        """The LP liquidity constant."""
+        if not self.raw_lp_total:
+            self.raw_lp_total = self.pool_datum.total_liquidity
+
+        return self.raw_lp_total
+
+    @property
+    def root_k_last(self) -> int:
+        """The last fee switch checkin."""
+        if not self.raw_root_k_last:
+            self.raw_root_k_last = self.pool_datum.root_k_last
+
+        return self.raw_root_k_last
 
     def get_amount_out(self, asset: Assets) -> Tuple[Assets, float]:
         """Get the output asset amount given an input asset amount.
