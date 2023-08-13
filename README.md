@@ -15,7 +15,11 @@ Documentation and additional features coming soon.
 ## Changelog
 
 Be sure to check out the `CHANGELOG.md` for a complete history of changes. This section
-only contains patch updates for the current minor version.
+only contains patch updates for the current minor version and patches.
+
+### v0.3.1
+
+* Modified `PoolState` initialization so that `PoolDatum` is not automatically queried from blockfrost. This was causing a large number of calls to be generated to Blockfrost when using `pools.get_pools()` (one for each of the 3,000+ pools). Now, the `lp_total` and `root_k_last` are only retrieved from Blockfrost when requested.
 
 ### 0.3.1
 
