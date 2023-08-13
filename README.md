@@ -1,4 +1,4 @@
-# minswap-py (v0.3.0)
+# minswap-py (v0.3.1)
 <p align="center">
     <img src="https://img.shields.io/pypi/status/minswap-py?style=flat-square" />
     <img src="https://img.shields.io/pypi/dm/minswap-py?style=flat-square" />
@@ -17,7 +17,7 @@ Documentation and additional features coming soon.
 Be sure to check out the `CHANGELOG.md` for a complete history of changes. This section
 only contains patch updates for the current minor version.
 
-### 0.3.0
+### 0.3.1
 
 Improvements:
 1. Added wallet support, including easy methods to create a collateral, send funds, and consolidate UTxOs.
