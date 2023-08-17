@@ -46,16 +46,6 @@ def check_valid_pool_output(utxo: Union[AddressUtxoContentItem, Output]):
         ValueError: Invalid `address`.
         ValueError: No factory token found in utxos.
     """
-    # Check to make sure the pool address is correct
-    correct_address: bool = utxo.address in [a.address.encode() for a in addr.POOL]
-    if not correct_address:
-        message = (
-            "Invalid pool address. Expected one of "
-            + f"{[a.address.encode() for a in addr.POOL]}"
-        )
-        logger.debug(message)
-        raise InvalidPool(message)
-
     # Check to make sure the pool has 1 factory token
     for asset in utxo.amount:
         has_factory: bool = (
@@ -102,18 +92,28 @@ class PoolState(BaseModel):
         assets = values["assets"]
 
         # Find the NFT that assigns the pool a unique id
-        nfts = [asset for asset in assets if asset.startswith(addr.POOL_NFT_POLICY_ID)]
-        if len(nfts) != 1:
-            raise ValueError("A pool must have one pool NFT token.")
-        pool_nft = Assets(**{nfts[0]: assets.__root__.pop(nfts[0])})
-        values["pool_nft"] = pool_nft
+        if "pool_nft" in values:
+            assert values["pool_nft"].startswith(addr.POOL_NFT_POLICY_ID)
+        else:
+            nfts = [
+                asset for asset in assets if asset.startswith(addr.POOL_NFT_POLICY_ID)
+            ]
+            if len(nfts) != 1:
+                raise ValueError("A pool must have one pool NFT token.")
+            pool_nft = Assets(**{nfts[0]: assets.__root__.pop(nfts[0])})
+            values["pool_nft"] = pool_nft
 
         # Find the Minswap NFT token
-        nfts = [asset for asset in assets if asset.startswith(addr.FACTORY_POLICY_ID)]
-        if len(nfts) != 1:
-            raise ValueError("A pool must have one Minswap NFT token.")
-        minswap_nft = Assets(**{nfts[0]: assets.__root__.pop(nfts[0])})
-        values["minswap_nft"] = minswap_nft
+        if "minswap_nft" in values:
+            assert values["minswap_nft"].startswith(addr.FACTORY_POLICY_ID)
+        else:
+            nfts = [
+                asset for asset in assets if asset.startswith(addr.FACTORY_POLICY_ID)
+            ]
+            if len(nfts) != 1:
+                raise ValueError("A pool must have one Minswap NFT token.")
+            minswap_nft = Assets(**{nfts[0]: assets.__root__.pop(nfts[0])})
+            values["minswap_nft"] = minswap_nft
 
         # Sometimes LP tokens for the pool are in the pool...so remove them
         pool_id = pool_nft.unit()[len(addr.POOL_NFT_POLICY_ID) :]
@@ -368,6 +368,14 @@ class PoolState(BaseModel):
         return lp_out, price_impact
 
 
+def get_pool_addresses() -> list[str]:
+    """bech32 pool addresses."""
+    response = BlockfrostBackend.api().asset_addresses(
+        addr.FACTORY_POLICY_ID + addr.FACTORY_ASSET_NAME, return_type="json"
+    )
+    return [pool["address"] for pool in response]
+
+
 def get_pools(
     return_non_pools: bool = False,
 ) -> Union[List[PoolState], tuple[List[PoolState], List[AddressUtxoContentItem]]]:
@@ -383,14 +391,16 @@ def get_pools(
     utxos_raw = []
 
     with ThreadPoolExecutor() as executor:
+        pool_addresses = get_pool_addresses()
+
         threads = executor.map(
             lambda x: BlockfrostBackend.api().address_utxos(
-                x.address.encode(),
+                x,
                 gather_pages=True,
                 order="desc",
                 return_type="json",
             ),
-            addr.POOL,
+            pool_addresses,
         )
         for pool_addr in threads:
             utxos_raw.extend(pool_addr)
@@ -432,8 +442,9 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
     """
     pool_tx = BlockfrostBackend.api().transaction_utxos(tx_hash, return_type="json")
     pool_utxo = None
+    pool_addresses = get_pool_addresses()
     for utxo in TxContentUtxo.parse_obj(pool_tx).outputs:
-        if utxo.address in [pool.bech32 for pool in addr.POOL]:
+        if utxo.address in pool_addresses:
             pool_utxo = utxo
             break
 

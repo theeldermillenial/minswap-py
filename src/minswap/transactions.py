@@ -348,7 +348,7 @@ def cache_utxos(
             ):
                 num_calls += 1
                 df["block_time"] = ts.as_py()
-                df["block_time"] = df.time.astype("datetime64[s]")
+                df["block_time"] = df.block_time.astype("datetime64[s]")
                 tx_utxos.append(df)
 
         while len(tx_utxos) > 0:
