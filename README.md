@@ -17,11 +17,11 @@ Documentation and additional features coming soon.
 Be sure to check out the `CHANGELOG.md` for a complete history of changes. This section
 only contains patch updates for the current minor version and patches.
 
-### v0.3.2-dev0
+### v0.3.1
 
 * Modified `PoolState` initialization so that `PoolDatum` is not automatically queried from blockfrost. This was causing a large number of calls to be generated to Blockfrost when using `pools.get_pools()` (one for each of the 3,000+ pools). Now, the `lp_total` and `root_k_last` are only retrieved from Blockfrost when requested.
 
-### 0.3.2-dev0
+### 0.3.0
 
 Improvements:
 1. Added wallet support, including easy methods to create a collateral, send funds, and consolidate UTxOs.
