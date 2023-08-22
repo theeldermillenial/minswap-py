@@ -321,16 +321,17 @@ class PoolState(BaseModel):
             unit_out = self.unit_b
 
         # Estimate the required input
-        numerator: int = asset.quantity() * 1000 * reserve_in
-        denominator: int = (reserve_out - asset.quantity()) * 997
+        fee_modifier = 10000 - self.volume_fee
+        numerator: int = asset.quantity() * 10000 * reserve_in
+        denominator: int = (reserve_out - asset.quantity()) * fee_modifier
         amount_in = Assets(unit=unit_out, quantity=numerator // denominator)
 
         # Estimate the price impact
         price_numerator: int = (
-            reserve_out * numerator * 997
-            - asset.quantity() * denominator * reserve_in * 1000
+            reserve_out * numerator * fee_modifier
+            - asset.quantity() * denominator * reserve_in * 10000
         )
-        price_denominator: int = reserve_out * numerator * 1000
+        price_denominator: int = reserve_out * numerator * 10000
         price_impact: float = price_numerator / price_denominator
 
         return amount_in, price_impact
