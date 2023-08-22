@@ -235,6 +235,16 @@ class PoolState(BaseModel):
         return PoolDatum.from_dict(self.raw_datum)
 
     @property
+    def volume_fee(self) -> int:
+        """Percentage fee of swap in basis points."""
+        return 30
+
+    @property
+    def batcher_fee(self) -> Assets:
+        """Batcher fee."""
+        return Assets(lovelace=2000000)
+
+    @property
     def lp_total(self) -> int:
         """The LP liquidity constant."""
         if not self.raw_lp_total:
@@ -274,16 +284,17 @@ class PoolState(BaseModel):
             unit_out = self.unit_a
 
         # Calculate the amount out
-        numerator: int = asset.quantity() * 997 * reserve_out
-        denominator: int = asset.quantity() * 997 + reserve_in * 1000
+        fee_modifier = 10000 - self.volume_fee
+        numerator: int = asset.quantity() * fee_modifier * reserve_out
+        denominator: int = asset.quantity() * fee_modifier + reserve_in * 10000
         amount_out = Assets(**{unit_out: numerator // denominator})
 
         # Calculate the price impact
         price_numerator: int = (
-            reserve_out * asset.quantity() * denominator * 997
-            - numerator * reserve_in * 1000
+            reserve_out * asset.quantity() * denominator * fee_modifier
+            - numerator * reserve_in * 10000
         )
-        price_denominator: int = reserve_out * asset.quantity() * denominator * 1000
+        price_denominator: int = reserve_out * asset.quantity() * denominator * 10000
         price_impact: float = price_numerator / price_denominator
 
         return amount_out, price_impact
