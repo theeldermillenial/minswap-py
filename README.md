@@ -1,4 +1,4 @@
-# minswap-py (v0.3.2)
+# minswap-py (v0.3.3)
 <p align="center">
     <img src="https://img.shields.io/pypi/status/minswap-py?style=flat-square" />
     <img src="https://img.shields.io/pypi/dm/minswap-py?style=flat-square" />
@@ -17,7 +17,7 @@ Documentation and additional features coming soon.
 Be sure to check out the `CHANGELOG.md` for a complete history of changes. This section
 only contains patch updates for the current minor version and patches.
 
-## v0.3.2
+## v0.3.3
 
 * Small change to fetching pool data, removing hard coded pool addresses and how pool addresses are fetched by finding addresses that contain the Minswap DEX NFT.
 * Small change to how swap exact in/out are calculated, where fees are now a PoolState property.
