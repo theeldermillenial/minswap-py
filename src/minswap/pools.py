@@ -93,7 +93,10 @@ class PoolState(BaseModel):
 
         # Find the NFT that assigns the pool a unique id
         if "pool_nft" in values:
-            assert values["pool_nft"].startswith(addr.POOL_NFT_POLICY_ID)
+            assert addr.POOL_NFT_POLICY_ID in [p[:56] for p in values["pool_nft"]]
+            pool_nft = Assets(
+                **{key: value for key, value in values["pool_nft"].items()}
+            )
         else:
             nfts = [
                 asset for asset in assets if asset.startswith(addr.POOL_NFT_POLICY_ID)
@@ -105,7 +108,7 @@ class PoolState(BaseModel):
 
         # Find the Minswap NFT token
         if "minswap_nft" in values:
-            assert values["minswap_nft"].startswith(addr.FACTORY_POLICY_ID)
+            assert addr.FACTORY_POLICY_ID in [p[:56] for p in values["minswap_nft"]]
         else:
             nfts = [
                 asset for asset in assets if asset.startswith(addr.FACTORY_POLICY_ID)
