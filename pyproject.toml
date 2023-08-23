@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "minswap-py"
-version = "0.3.1"
+version = "0.3.3"
 description = ""
 authors = ["eldermillenial <eldermillenial@protonmail.com>"]
 readme = "README.md"
@@ -41,6 +41,7 @@ mkdocs-literate-nav = "^0.6.0"
 semver = "^2.13.0"
 packaging = "^23.0"
 pre-commit = "^3.0.1"
+ipykernel = "^6.25.1"
 
 [tool.isort]
 profile = "black"
