@@ -17,12 +17,16 @@ Documentation and additional features coming soon.
 Be sure to check out the `CHANGELOG.md` for a complete history of changes. This section
 only contains patch updates for the current minor version and patches.
 
-## v0.3.3
+### v0.3.3
+
+* Fixed a bug in how the NFT policy IDs were being checked when restoring a PoolState from JSON.
+
+### 0.3.2
 
 * Small change to fetching pool data, removing hard coded pool addresses and how pool addresses are fetched by finding addresses that contain the Minswap DEX NFT.
 * Small change to how swap exact in/out are calculated, where fees are now a PoolState property.
 
-### v0.3.1
+### 0.3.1
 
 * Modified `PoolState` initialization so that `PoolDatum` is not automatically queried from blockfrost. This was causing a large number of calls to be generated to Blockfrost when using `pools.get_pools()` (one for each of the 3,000+ pools). Now, the `lp_total` and `root_k_last` are only retrieved from Blockfrost when requested.
 

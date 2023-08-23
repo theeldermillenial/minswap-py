@@ -1,5 +1,9 @@
 # Change
 
+### v0.3.3
+
+* Fixed a bug in how the NFT policy IDs were being checked when restoring a PoolState from JSON.
+
 ## v0.3.2
 
 * Small change to fetching pool data, removing hard coded pool addresses and how pool addresses are fetched by finding addresses that contain the Minswap DEX NFT.
