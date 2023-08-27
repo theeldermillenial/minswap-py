@@ -1,4 +1,4 @@
-# minswap-py (v0.3.3)
+# minswap-py (v0.3.4)
 <p align="center">
     <img src="https://img.shields.io/pypi/status/minswap-py?style=flat-square" />
     <img src="https://img.shields.io/pypi/dm/minswap-py?style=flat-square" />
@@ -21,7 +21,7 @@ only contains patch updates for the current minor version and patches.
 
 * Fixed a bug for non-ADA pools that was improperly ordering assets in the pool.
 
-### 0.3.3
+### 0.3.4
 
 * Fixed a bug in how the NFT policy IDs were being checked when restoring a PoolState from JSON.
 
