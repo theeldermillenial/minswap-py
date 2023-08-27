@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from typing import List, Optional, Tuple, Union
 
-from pydantic import BaseModel, root_validator
+from pydantic import BaseModel, root_validator, validator
 
 from minswap import addr
 from minswap.assets import naturalize_assets
@@ -134,17 +134,18 @@ class PoolState(BaseModel):
             # Non-ADA pair
             assert len(non_ada_assets) == 2, "Pool must only have 2 non-ADA assets."
 
-            # Send the ADA token to the end
-            values["assets"].__root__["lovelace"] = values["assets"].__root__.pop(
-                "lovelace"
-            )
-
         else:
             raise ValueError(
                 "Pool must have 2 or 3 assets except factor, NFT, and LP tokens."
             )
 
         return values
+
+    @validator("assets")
+    def post_validator(cls, assets: Assets):  # noqa: D102
+        if len(assets) > 2:
+            assets.__root__["lovelace"] = assets.__root__.pop("lovelace")
+        return assets
 
     @property
     def id(self) -> str:

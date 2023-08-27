@@ -17,7 +17,11 @@ Documentation and additional features coming soon.
 Be sure to check out the `CHANGELOG.md` for a complete history of changes. This section
 only contains patch updates for the current minor version and patches.
 
-### v0.3.3
+### 0.3.4
+
+* Fixed a bug for non-ADA pools that was improperly ordering assets in the pool.
+
+### 0.3.3
 
 * Fixed a bug in how the NFT policy IDs were being checked when restoring a PoolState from JSON.
 

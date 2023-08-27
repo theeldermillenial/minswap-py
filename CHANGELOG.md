@@ -1,19 +1,23 @@
 # Change
 
-### v0.3.3
+### 0.3.4
+
+* Fixed a bug for non-ADA pools that was improperly ordering assets in the pool.
+
+### 0.3.3
 
 * Fixed a bug in how the NFT policy IDs were being checked when restoring a PoolState from JSON.
 
-## v0.3.2
+### 0.3.2
 
 * Small change to fetching pool data, removing hard coded pool addresses and how pool addresses are fetched by finding addresses that contain the Minswap DEX NFT.
 * Small change to how swap exact in/out are calculated, where fees are now a PoolState property.
 
-## v0.3.1
+### 0.3.1
 
 * Modified `PoolState` initialization so that `PoolDatum` is not automatically queried from blockfrost. This was causing a large number of calls to be generated to Blockfrost when using `pools.get_pools()` (one for each of the 3,000+ pools). Now, the `lp_total` and `root_k_last` are only retrieved from Blockfrost when requested.
 
-## v0.3.0
+## 0.3.0
 
 Improvements:
 1. Added wallet support, including easy methods to create a collateral, send funds, and consolidate UTxOs.
