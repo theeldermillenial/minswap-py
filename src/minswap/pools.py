@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from typing import List, Optional, Tuple, Union
 
-from pydantic import BaseModel, root_validator, validator
+from pydantic.v1 import BaseModel, root_validator, validator
 
 from minswap import addr
 from minswap.assets import naturalize_assets

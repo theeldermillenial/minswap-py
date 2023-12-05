@@ -6,7 +6,7 @@ from typing import List, Optional, Union
 
 import blockfrost
 import pycardano
-from pydantic import BaseModel, Field, root_validator
+from pydantic.v1 import BaseModel, Field, root_validator
 
 import minswap.addr
 import minswap.models.blockfrost_models

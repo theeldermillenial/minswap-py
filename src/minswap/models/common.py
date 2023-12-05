@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Union
 
 import pycardano
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, root_validator, validator
+from pydantic.v1 import BaseModel, Field, root_validator, validator
 
 from minswap.models import blockfrost_models
 
