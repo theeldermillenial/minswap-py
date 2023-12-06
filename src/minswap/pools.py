@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from typing import List, Optional, Tuple, Union
 
-from pydantic.v1 import BaseModel, root_validator, validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from minswap import addr
 from minswap.assets import naturalize_assets
@@ -79,15 +79,13 @@ class PoolState(BaseModel):
     pool_nft: Assets
     minswap_nft: Assets
     datum_hash: str
-    raw_datum: Optional[str]
-    raw_lp_total: Optional[int]
-    raw_root_k_last: Optional[int]
+    raw_datum: Optional[str] = None
+    raw_lp_total: Optional[int] = None
+    raw_root_k_last: Optional[int] = None
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
-    class Config:  # noqa: D106
-        allow_mutation = False
-        extra = "forbid"
-
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def translate_address(cls, values):  # noqa: D102
         assets = values["assets"]
 
@@ -103,7 +101,7 @@ class PoolState(BaseModel):
             ]
             if len(nfts) != 1:
                 raise ValueError("A pool must have one pool NFT token.")
-            pool_nft = Assets(**{nfts[0]: assets.__root__.pop(nfts[0])})
+            pool_nft = Assets(**{nfts[0]: assets.root.pop(nfts[0])})
             values["pool_nft"] = pool_nft
 
         # Find the Minswap NFT token
@@ -115,14 +113,14 @@ class PoolState(BaseModel):
             ]
             if len(nfts) != 1:
                 raise ValueError("A pool must have one Minswap NFT token.")
-            minswap_nft = Assets(**{nfts[0]: assets.__root__.pop(nfts[0])})
+            minswap_nft = Assets(**{nfts[0]: assets.root.pop(nfts[0])})
             values["minswap_nft"] = minswap_nft
 
         # Sometimes LP tokens for the pool are in the pool...so remove them
         pool_id = pool_nft.unit()[len(addr.POOL_NFT_POLICY_ID) :]
         lps = [asset for asset in assets if asset.endswith(pool_id)]
         for lp in lps:
-            assets.__root__.pop(lp)
+            assets.root.pop(lp)
 
         non_ada_assets = [a for a in assets if a != "lovelace"]
 
@@ -141,10 +139,11 @@ class PoolState(BaseModel):
 
         return values
 
-    @validator("assets")
+    @field_validator("assets")
+    @classmethod
     def post_validator(cls, assets: Assets):  # noqa: D102
         if len(assets) > 2:
-            assets.__root__["lovelace"] = assets.__root__.pop("lovelace")
+            assets.root["lovelace"] = assets.root.pop("lovelace")
         return assets
 
     @property
@@ -182,7 +181,7 @@ class PoolState(BaseModel):
         if value == "lovelace":
             return "lovelace"
         info = BlockfrostBackend.api().asset(value, return_type="json")
-        return bytes.fromhex(AssetIdentity.parse_obj(info).asset_name).decode()
+        return bytes.fromhex(AssetIdentity.model_validate(info).asset_name).decode()
 
     @property
     def asset_a_name(self) -> str:
@@ -421,7 +420,7 @@ def get_pools(
         for pool_addr in threads:
             utxos_raw.extend(pool_addr)
 
-    utxos = AddressUtxoContent.parse_obj(utxos_raw)
+    utxos = AddressUtxoContent.model_validate(utxos_raw)
 
     pools: List[PoolState] = []
     non_pools: List[AddressUtxoContentItem] = []
@@ -459,7 +458,7 @@ def get_pool_in_tx(tx_hash: str) -> Optional[PoolState]:
     pool_tx = BlockfrostBackend.api().transaction_utxos(tx_hash, return_type="json")
     pool_utxo = None
     pool_addresses = get_pool_addresses()
-    for utxo in TxContentUtxo.parse_obj(pool_tx).outputs:
+    for utxo in TxContentUtxo.model_validate(pool_tx).outputs:
         if utxo.address in pool_addresses:
             pool_utxo = utxo
             break
@@ -496,6 +495,6 @@ def get_pool_by_id(pool_id: str) -> Optional[PoolState]:
     if len(nft_txs) == 0:
         return None
 
-    nft_txs = AssetTransaction.parse_obj(nft_txs[0])
+    nft_txs = AssetTransaction.model_validate(nft_txs[0])
 
     return get_pool_in_tx(tx_hash=nft_txs.tx_hash)

@@ -113,7 +113,7 @@ def _cache_txs(
                 break
 
     # Convert data to a vaex dataframe
-    df = pandas.DataFrame([d.dict() for d in transactions[:index]])
+    df = pandas.DataFrame([d.model_dump() for d in transactions[:index]])
     df["block_time"] = df.block_time.astype("datetime64[s]")
 
     # Define the output path
@@ -196,10 +196,10 @@ def update_asset_info(asset: str) -> Optional[minswap.models.AssetIdentity]:
 
     info = minswap.utils.BlockfrostBackend.api().asset(asset, return_type="json")
 
-    asset_id = minswap.models.AssetIdentity.parse_obj(info)
+    asset_id = minswap.models.AssetIdentity.model_validate(info)
 
     with open(asset_path.joinpath("asset.json"), "w") as fw:
-        json.dump(asset_id.dict(), fw, indent=2)
+        json.dump(asset_id.model_dump(), fw, indent=2)
 
     return asset_id
 
@@ -225,7 +225,9 @@ def get_asset_info(
     if update_cache or not asset_path.exists():
         return update_asset_info(asset)
     else:
-        return minswap.models.AssetIdentity.parse_file(asset_path)
+        with open(asset_path) as fr:
+            data = fr.read()
+        return minswap.models.AssetIdentity.model_validate_json(data)
 
 
 def update_assets(assets: Union[MutableSet[str], minswap.models.Assets]) -> None:
@@ -355,7 +357,7 @@ def get_asset_history(
     )
 
     asset_snapshots = [
-        minswap.models.AssetHistoryReference.parse_obj(tx) for tx in asset_txs
+        minswap.models.AssetHistoryReference.model_validate(tx) for tx in asset_txs
     ]
 
     return asset_snapshots
@@ -386,7 +388,7 @@ def get_asset_transactions(
     )
 
     asset_snapshots = [
-        minswap.models.PoolTransactionReference.parse_obj(tx) for tx in asset_txs
+        minswap.models.PoolTransactionReference.model_validate(tx) for tx in asset_txs
     ]
 
     return asset_snapshots
@@ -409,7 +411,7 @@ def get_asset_history_transactions(
     Returns:
         A list of `PoolHistory` items.
     """
-    tx = minswap.models.Transaction.parse_obj(
+    tx = minswap.models.Transaction.model_validate(
         minswap.utils.BlockfrostBackend.api().transaction(
             hash=tx_hash, return_type="json"
         )
@@ -492,7 +494,7 @@ def cache_history(
         logger.debug("Caching transactions.")
 
         # Convert data to a vaex dataframe
-        df = pandas.DataFrame([d.dict() for d in transactions])
+        df = pandas.DataFrame([d.model_dump() for d in transactions])
 
         # Define the output path
         cache_name = "history.arrow"

@@ -14,7 +14,7 @@ repository = "https://github.com/theeldermillenial/minswap-py"
 [tool.poetry.dependencies]
 python = "^3.8.1"
 blockfrost-python = "0.5.3"
-pycardano = "0.9.0"
+pycardano = "0.10.0"
 pydantic = "2.5.2"
 python-dotenv = "0.21.1"
 numba = "^0.56.4"

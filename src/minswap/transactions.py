@@ -104,7 +104,7 @@ def get_pool_transaction_history(
     )
 
     pool_snapshots = [
-        minswap.models.PoolTransactionReference.parse_obj(tx) for tx in nft_txs
+        minswap.models.PoolTransactionReference.model_validate(tx) for tx in nft_txs
     ]
 
     return pool_snapshots

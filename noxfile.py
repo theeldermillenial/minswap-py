@@ -43,8 +43,12 @@ def build_blockfrost_classes(session):
         "--collapse-root-models",
         "--field-constraints",
         "--use-double-quotes",
+        "--reuse-model",
+        "--force-optional",
         "--target-python-version",
         "3.9",
+        "--output-model-type",
+        "pydantic_v2.BaseModel",
     )
 
 

@@ -6,6 +6,7 @@ from typing import List, Optional, Union
 
 import blockfrost
 import pycardano
+from pydantic import ConfigDict
 from pydantic.v1 import BaseModel, Field, root_validator
 
 import minswap.addr
@@ -66,9 +67,7 @@ class Order(BaseModel):
     transaction: pycardano.Transaction
     submitted_tx: Optional[TxContentUtxo] = None
     completed_tx: Optional[TxContentUtxo] = None
-
-    class Config:  # noqa
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
     def status(self) -> OrderStatus:
@@ -89,7 +88,7 @@ class Order(BaseModel):
                 raw_tx = minswap.utils.BlockfrostBackend.api().transaction_utxos(
                     tx.hash, return_type="json"
                 )
-                tx = TxContentUtxo.parse_obj(raw_tx)
+                tx = TxContentUtxo.model_validate(raw_tx)
 
             if not isinstance(tx, TxContentUtxo):
                 raise InvalidOrderTx
@@ -109,7 +108,7 @@ class Order(BaseModel):
                 raw_tx = minswap.utils.BlockfrostBackend.api().transaction_utxos(
                     str(self.transaction.id), return_type="json"
                 )
-                self.submitted_tx = TxContentUtxo.parse_obj(raw_tx)
+                self.submitted_tx = TxContentUtxo.model_validate(raw_tx)
             except blockfrost.ApiError as e:
                 if e.status_code == 404:
                     raise InvalidOrderTx(
@@ -138,9 +137,7 @@ class Wallet(BaseModel):
         os.environ["PROJECT_ID"],
         base_url=getattr(blockfrost.ApiUrls, os.environ["NETWORK"]).value,
     )
-
-    class Config:  # noqa
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @root_validator
     def _validator(cls, values):
@@ -198,7 +195,7 @@ class Wallet(BaseModel):
     @property
     def utxos(self) -> AddressUtxoContent:
         """Get the UTXOs of the wallet."""
-        utxos = AddressUtxoContent.parse_obj(
+        utxos = AddressUtxoContent.model_validate(
             minswap.utils.BlockfrostBackend.api().address_utxos(
                 address=self.address.bech32, return_type="json"
             )
@@ -303,6 +300,9 @@ class Wallet(BaseModel):
         if isinstance(tx, bytes):
             tx = len(tx)
         parameters = minswap.utils.BlockfrostBackend.protocol_parameters()
+
+        assert parameters.min_fee_a is not None
+        assert parameters.min_fee_b is not None
 
         return int(parameters.min_fee_a * tx + parameters.min_fee_b)
 

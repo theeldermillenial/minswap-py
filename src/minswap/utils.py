@@ -41,12 +41,14 @@ class BlockfrostBackend:
     _api_url = getattr(blockfrost.ApiUrls, os.environ["NETWORK"]).value
     _api = blockfrost.BlockFrostApi(PROJECT_ID, base_url=_api_url)
     _network_parameters: minswap.models.EpochParamContent = (
-        minswap.models.EpochParamContent.parse_obj(
+        minswap.models.EpochParamContent.model_validate(
             _api.epoch_latest_parameters(return_type="json")
         )
     )
-    _epoch_infos: minswap.models.EpochContent = minswap.models.EpochContent.parse_obj(
-        _api.epoch_latest(return_type="json")
+    _epoch_infos: minswap.models.EpochContent = (
+        minswap.models.EpochContent.model_validate(
+            _api.epoch_latest(return_type="json")
+        )
     )
 
     @classmethod
@@ -109,11 +111,12 @@ class BlockfrostBackend:
     @classmethod
     def protocol_parameters(cls) -> minswap.models.EpochParamContent:
         """Cardano protocol parameters."""
+        assert cls._epoch_infos.end_time is not None
         if int(time.time()) > cls._epoch_infos.end_time:
-            cls._epoch_infos = minswap.models.EpochContent.parse_obj(
+            cls._epoch_infos = minswap.models.EpochContent.model_validate(
                 cls.api().epoch_latest(return_type="json")
             )
-            cls._network_parameters = minswap.models.EpochParamContent.parse_obj(
+            cls._network_parameters = minswap.models.EpochParamContent.model_validate(
                 cls.api().epoch_latest_parameters(return_type="json")
             )
 
@@ -226,7 +229,7 @@ def _cache_timestamp_data(
                 if data[index].block_time.month != data[index + 1].block_time.month:
                     index += 1
                     break
-        df = pandas.DataFrame([d.dict() for d in data[:index]])
+        df = pandas.DataFrame([d.model_dump() for d in data[:index]])
     elif isinstance(data[0], pandas.DataFrame):
         if data[0].block_time[0].month == data[-1].block_time[0].month:  # type: ignore
             index = len(data)

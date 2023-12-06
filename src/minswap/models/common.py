@@ -11,7 +11,14 @@ from typing import Dict, List, Optional, Union
 
 import pycardano
 from dotenv import load_dotenv
-from pydantic.v1 import BaseModel, Field, root_validator, validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    field_validator,
+    model_validator,
+)
 
 from minswap.models import blockfrost_models
 
@@ -35,25 +42,25 @@ class PoolTransactionReference(BaseModel):
     block_height: int
     block_time: datetime
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def _validator(cls, values):
         values["block_time"] = datetime.utcfromtimestamp(values["block_time"])
 
         return values
 
-    class Config:  # noqa: D106
-        allow_mutation = False
-        extra = "forbid"
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 class Transaction(blockfrost_models.TxContent):
     """Transaction Content."""
 
-    block_time: datetime = blockfrost_models.TxContent.__fields__[
+    block_time: datetime = blockfrost_models.TxContent.model_fields[
         "block_time"
     ]  # type: ignore
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def _validator(cls, values):
         values["block_time"] = datetime.utcfromtimestamp(values["block_time"])
 
@@ -66,23 +73,20 @@ class AssetHistoryReference(BaseModel):
     tx_hash: str
     action: str
     amount: int
-
-    class Config:  # noqa: D106
-        allow_mutation = False
-        extra = "forbid"
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class BaseList(BaseModel):
+class BaseList(RootModel):
     """Utility class for list models."""
 
     def __iter__(self):  # noqa
-        return iter(self.__root__)
+        return iter(self.root)
 
     def __getitem__(self, item):  # noqa
-        return self.__root__[item]
+        return self.root[item]
 
     def __len__(self):  # noqa
-        return len(self.__root__)
+        return len(self.root)
 
 
 class BaseDict(BaseList):
@@ -90,18 +94,18 @@ class BaseDict(BaseList):
 
     def items(self):
         """Return iterable of key-value pairs."""
-        return self.__root__.items()
+        return self.root.items()
 
     def keys(self):
         """Return iterable of keys."""
-        return self.__root__.keys()
+        return self.root.keys()
 
     def values(self):
         """Return iterable of values."""
-        return self.__root__.values()
+        return self.root.values()
 
     def __getitem__(self, item):  # noqa
-        return self.__root__.get(item, 0)
+        return self.root.get(item, 0)
 
 
 class TxIn(BaseModel):
@@ -129,7 +133,7 @@ def _unit_alias(unit: str) -> str:
 class Assets(BaseDict):
     """Contains all tokens and quantities."""
 
-    __root__: Dict[str, int]
+    root: Dict[str, int]
 
     def unit(self, index: int = 0) -> str:
         """Units of asset at `index`."""
@@ -139,19 +143,20 @@ class Assets(BaseDict):
         """Quantity of the asset at `index`."""
         return list(self.values())[index]
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def _digest_assets(cls, values):
-        if "__root__" in values:
-            root = values["__root__"]
+        if "root" in values:
+            root = values["root"]
         elif "values" in values and isinstance(values["values"], list):
             root = {v.unit: v.quantity for v in values["values"]}
         else:
-            root = {k: v for k, v in values.items()}
+            root = {k: int(v) for k, v in values.items()}
         root = dict(
             sorted(root.items(), key=lambda x: "" if x[0] == "lovelace" else x[0])
         )
 
-        return {"__root__": root}
+        return root
 
     def __add__(a, b):
         """Add two assets."""
@@ -199,7 +204,8 @@ class OnchainMetadataStandard(Enum):
 class AssetIdentity(blockfrost_models.Asset1):
     """A blockchain asset."""
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def _validate_asset_name(cls, values):
         """Handle missing asset metadata.
 
@@ -214,8 +220,7 @@ class AssetIdentity(blockfrost_models.Asset1):
 
         return values
 
-    class Config:  # noqa: D106
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
     @property
     def decimals(self) -> int:
@@ -231,7 +236,8 @@ class AddressUtxoContentItem(blockfrost_models.AddressUtxoContentItem):
 
     amount: Assets
 
-    @validator("amount", pre=True)
+    @field_validator("amount", mode="before")
+    @classmethod
     def _to_assets(cls, value):
         if isinstance(value, list):
             return Assets(**{i["unit"]: i["quantity"] for i in value})
@@ -253,10 +259,10 @@ class AddressUtxoContentItem(blockfrost_models.AddressUtxoContentItem):
 class AddressUtxoContent(blockfrost_models.AddressUtxoContent, BaseList):
     """An address UTxO list of items."""
 
-    __root__: List[
+    root: List[
         AddressUtxoContentItem
-    ] = blockfrost_models.AddressUtxoContent.__fields__[
-        "__root__"
+    ] = blockfrost_models.AddressUtxoContent.model_fields[
+        "root"
     ]  # type:ignore
 
 
@@ -264,17 +270,20 @@ class Input(blockfrost_models.Input):
     """An input to a transaction."""
 
     amount: Assets = Field(
-        ...,
-        example=[
-            {"unit": "lovelace", "quantity": "42000000"},
-            {
-                "unit": "b0d07d45fe9514f80213f4020e5a61241458be626841cde717cb38a76e7574636f696e",  # noqa
-                "quantity": "12",
-            },
+        None,
+        examples=[
+            [
+                {"unit": "lovelace", "quantity": "42000000"},
+                {
+                    "unit": "b0d07d45fe9514f80213f4020e5a61241458be626841cde717cb38a76e7574636f696e",  # noqa
+                    "quantity": "12",
+                },
+            ]
         ],
     )
 
-    @validator("amount", pre=True)
+    @field_validator("amount", mode="before")
+    @classmethod
     def _to_assets(cls, value):
         if isinstance(value, list):
             return Assets(**{i["unit"]: i["quantity"] for i in value})
@@ -286,17 +295,20 @@ class Output(blockfrost_models.Output):
     """An output to a transaction."""
 
     amount: Assets = Field(
-        ...,
-        example=[
-            {"unit": "lovelace", "quantity": "42000000"},
-            {
-                "unit": "b0d07d45fe9514f80213f4020e5a61241458be626841cde717cb38a76e7574636f696e",  # noqa
-                "quantity": "12",
-            },
+        None,
+        examples=[
+            [
+                {"unit": "lovelace", "quantity": "42000000"},
+                {
+                    "unit": "b0d07d45fe9514f80213f4020e5a61241458be626841cde717cb38a76e7574636f696e",  # noqa
+                    "quantity": "12",
+                },
+            ]
         ],
     )
 
-    @validator("amount", pre=True)
+    @field_validator("amount", mode="before")
+    @classmethod
     def _to_assets(cls, value):
         if isinstance(value, list):
             return Assets(**{i["unit"]: i["quantity"] for i in value})
@@ -322,11 +334,10 @@ class Address(BaseModel):
     address: pycardano.Address
     payment: Optional[pycardano.Address]
     stake: Optional[pycardano.Address]
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    class Config:  # noqa: D106
-        arbitrary_types_allowed = True
-
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def translate_address(cls, values):  # noqa: D102
         assert "bech32" in values
 
@@ -417,6 +428,8 @@ class PlutusFullAddress(pycardano.PlutusData):
 @dataclass
 class AssetClass(pycardano.PlutusData):
     """An asset class. Separates out token policy and asset name."""
+
+    CONSTR_ID = 0
 
     policy: bytes
     asset_name: bytes
@@ -543,6 +556,8 @@ class ReceiverDatum(pycardano.PlutusData):
 class OrderDatum(pycardano.PlutusData):
     """An order datum."""
 
+    CONSTR_ID = 0
+
     sender: PlutusFullAddress
     receiver: PlutusFullAddress
     receiver_datum_hash: Union[pycardano.DatumHash, PlutusNone]
@@ -577,6 +592,8 @@ class _EmptyFeeSwitchWrapper(pycardano.PlutusData):
 @dataclass
 class PoolDatum(pycardano.PlutusData):
     """Pool Datum."""
+
+    CONSTR_ID = 0
 
     asset_a: AssetClass
     asset_b: AssetClass

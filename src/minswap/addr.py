@@ -95,7 +95,7 @@ def _cache_transactions(
                 break
 
     # Convert data to a vaex dataframe
-    df = pandas.DataFrame([d.dict() for d in transactions[:index]])
+    df = pandas.DataFrame([d.model_dump() for d in transactions[:index]])
     df["time"] = df.time.astype("datetime64[s]")
 
     # Define the output path
@@ -241,7 +241,7 @@ def get_pol_transaction_history(
         pol_addr, count=count, page=page, order=order, return_type="json"
     )
 
-    tx = [PoolTransactionReference.parse_obj(tx) for tx in txs]
+    tx = [PoolTransactionReference.model_validate(tx) for tx in txs]
 
     return tx
 
