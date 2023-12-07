@@ -6,8 +6,7 @@ from typing import List, Optional, Union
 
 import blockfrost
 import pycardano
-from pydantic import ConfigDict
-from pydantic.v1 import BaseModel, Field, root_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import minswap.addr
 import minswap.models.blockfrost_models
@@ -139,7 +138,7 @@ class Wallet(BaseModel):
     )
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    @root_validator
+    @model_validator(mode="before")
     def _validator(cls, values):
         if Path(values["path"]).exists():
             with open(Path(values["path"])) as fr:
