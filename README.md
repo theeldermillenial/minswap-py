@@ -1,4 +1,4 @@
-# minswap-py (v0.4.0-dev0)
+# minswap-py (v0.4.0-dev1)
 <p align="center">
     <img src="https://img.shields.io/pypi/status/minswap-py?style=flat-square" />
     <img src="https://img.shields.io/pypi/dm/minswap-py?style=flat-square" />
@@ -17,7 +17,7 @@ Documentation and additional features coming soon.
 Be sure to check out the `CHANGELOG.md` for a complete history of changes. This section
 only contains patch updates for the current minor version and patches.
 
-### 0.4.0-dev0
+### 0.4.0-dev1
 
 * Fixed a bug for non-ADA pools that was improperly ordering assets in the pool.
 
