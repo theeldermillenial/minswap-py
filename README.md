@@ -7,6 +7,12 @@
     <a href="https://github.com/psf/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
 </p>
 
+NOTE: It's been a fun ride, but the day has finally come to deprecate `minswap-py`. You can still download and use it, but it is no longer maintained. Thank you all for your support!
+
+On the bright side, you can check out `charli3-dendrite`, a new project that aims to provide support for all DEXs on Cardano! This is where all new development activity will occur. It already supports Minswap V2 and stableswaps!
+
+https://github.com/theeldermillenial/charli3-dendrite/blob/main/README.md
+
 `minswap-py` is a tool to interact with [Minswap](https://minswap.org/).  The current version has feature parity with the minswap [blockfrost-adapter](https://github.com/minswap/sdk), except for the ability to remove liquidity.
 
 Documentation and additional features coming soon.
